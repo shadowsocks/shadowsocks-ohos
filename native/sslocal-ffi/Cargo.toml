@@ -1,0 +1,41 @@
+[package]
+name = "sslocal-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "C ABI wrapper around shadowsocks-service for the HarmonyOS NEXT app"
+license = "GPL-3.0-or-later"
+
+[lib]
+name = "sslocal_core"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# local-tun is on by default: HarmonyOS routes all packets through a tun
+# device handed to the core as a file descriptor. local-flow-stat is on by
+# default too: the app reads cumulative traffic counters like
+# shadowsocks-android does.
+default = ["local-tun", "local-flow-stat"]
+# Direct tun-device support (requires the `tun` crate to build for the target)
+local-tun = ["shadowsocks-service/local-tun"]
+# Periodic flow-stat reporting (tx/rx counters to a loopback TCP address)
+local-flow-stat = ["shadowsocks-service/local-flow-stat"]
+
+[dev-dependencies]
+env_logger = "0.11"
+
+[dependencies]
+log = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+shadowsocks-service = { path = "../../../core/src/main/rust/shadowsocks-rust/crates/shadowsocks-service", default-features = false, features = [
+    "local",
+    "server",
+    "aead-cipher",
+    "aead-cipher-2022",
+    "local-dns",
+] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[workspace]

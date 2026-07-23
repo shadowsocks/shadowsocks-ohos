@@ -1,0 +1,3 @@
+# Keep NAPI entry points reachable
+-keep-global-name
+sslocal

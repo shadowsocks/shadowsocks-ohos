@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Editors / IDE
+/.idea
+/.vscode
+*.iml
+
+# HarmonyOS / hvigor build outputs
+**/build
+**/.hvigor
+**/.cxx
+**/.test
+**/.preview
+**/.clangd
+/local.properties
+/oh_modules
+**/oh_modules
+oh-package-lock.json5
+
+# Rust staticlib installed into the HAP module (built by native/build-ohos.sh)
+entry/libs
+
+# Rust build artifacts
+target/
+native/sslocal-ffi/target
+
+# Tun e2e scratch data (Linux/Docker e2e helpers)
+native/.tun-e2e
+
+# Signing material — never commit keystores or certificates
+*.p12
+*.keystore
+*.csr
+*.cer

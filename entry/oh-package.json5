@@ -1,0 +1,11 @@
+{
+  "name": "entry",
+  "version": "5.3.5",
+  "description": "Shadowsocks client for HarmonyOS NEXT",
+  "main": "",
+  "author": "Max Lv <max.c.lv@gmail.com>",
+  "license": "GPL-3.0-or-later",
+  "dependencies": {
+    "libsslocal.so": "file:./src/main/cpp/types/libsslocal"
+  }
+}

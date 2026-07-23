@@ -1,0 +1,10 @@
+{
+  "app": {
+    "bundleName": "com.github.shadowsocks.harmony",
+    "vendor": "shadowsocks",
+    "versionCode": 5030550,
+    "versionName": "5.3.5",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}
