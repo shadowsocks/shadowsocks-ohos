@@ -137,7 +137,8 @@ through the tunnel can therefore only pass on real hardware.
 `entry/src/ohosTest/ets/test/VpnE2e.test.ets` is self-contained: it starts
 `SsVpnExtensionAbility` from the test process (necessary — `aa test` tears
 down a VPN started earlier from the UI), fetches a marker page
-(`http://<host>:8000/e2e.txt`), then asserts the core's persisted flow
+(`http://<host>:8000/e2e.txt` — set `MARKER_URL` at the top of the test to the
+address of the machine serving it), then asserts the core's persisted flow
 counters (`<filesDir>/store/traffic_stats.json`, see
 `model/TrafficStats.ets`) moved. Host side:
 

@@ -39,12 +39,22 @@ if [[ -n "${E2E_PROXY:-}" ]]; then
 fi
 
 echo "=== running e2e in privileged container ($E2E_IMAGE) ==="
+# `${arr[@]+"${arr[@]}"}`, not `"${arr[@]}"`: bash 3.2 — what macOS ships, and
+# macOS is this script's whole reason to exist — treats the expansion of an
+# empty array as an unbound variable and aborts under `set -u`.
 exec docker run --rm --privileged \
     --device /dev/net/tun \
-    "${PROXY_ARGS[@]}" \
+    ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"} \
     -v "$OUT_DIR:/work" \
     -e NET_HELPER=/work/net_helper \
     -e "RUST_LOG=${RUST_LOG:-info}" \
     --entrypoint bash \
     "$E2E_IMAGE" \
-    -c "{ $E2E_PREP ; } ; bash /work/tun-e2e-linux.sh"
+    -c "{ $E2E_PREP ; } ; \
+        command -v ip >/dev/null || { \
+            echo 'no iproute2 in the container: E2E_PREP could not install it.' >&2; \
+            echo 'The container usually has no direct internet — start the bundled' >&2; \
+            echo 'proxy and point E2E_PROXY at it (see the comments in this script).' >&2; \
+            exit 1; \
+        } ; \
+        bash /work/tun-e2e-linux.sh"

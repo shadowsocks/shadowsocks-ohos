@@ -67,6 +67,12 @@ struct Index {
     this.reload();
   }
 
+  aboutToDisappear(): void {
+    // the poll timer outlives the page otherwise, and keeps reading the
+    // stats file (and touching @State) after the component is gone
+    this.stopStatsPolling();
+  }
+
   onPageShow(): void {
     // returning from the edit/subscription page may have changed the list
     this.reload();
@@ -82,13 +88,27 @@ struct Index {
       (this.profiles.length > 0 ? this.profiles[0] : null);
   }
 
+  /** Reports a failed store operation instead of rejecting into a click handler. */
+  private reportFailure(what: string, e: Object): void {
+    hilog.error(0x0000, TAG, '%{public}s failed: %{public}s', what, JSON.stringify(e));
+    promptAction.showToast({ message: `${what} failed` });
+  }
+
   private async selectProfile(profile: Profile): Promise<void> {
     this.currentId = profile.id;
-    await ProfileStore.setCurrentId(abilityContext(), profile.id);
+    try {
+      await ProfileStore.setCurrentId(abilityContext(), profile.id);
+    } catch (e) {
+      this.reportFailure('Select profile', e as Object);
+    }
   }
 
   private async removeProfile(profile: Profile): Promise<void> {
-    await ProfileStore.remove(abilityContext(), profile.id);
+    try {
+      await ProfileStore.remove(abilityContext(), profile.id);
+    } catch (e) {
+      this.reportFailure('Delete profile', e as Object);
+    }
     await this.reload();
   }
 
@@ -103,7 +123,7 @@ struct Index {
       await ProfileStore.setCurrentId(abilityContext(), profile.id);
       await this.reload();
       promptAction.showToast({ message: `Imported ${profile.name}` });
-    });
+    }).catch((e: Object) => this.reportFailure('Import', e));
   }
 
   private async connect(): Promise<void> {
@@ -141,6 +161,11 @@ struct Index {
   private async disconnect(): Promise<void> {
     try {
       await vpnExtension.stopVpnExtensionAbility(VPN_ABILITY);
+    } catch (e) {
+      // the extension may already be gone; report but still leave the UI
+      // in the disconnected state rather than rejecting into the click handler
+      hilog.warn(0x0000, TAG, 'vpn stop failed: %{public}s', JSON.stringify(e));
+      promptAction.showToast({ message: `Failed to stop VPN: ${JSON.stringify(e)}` });
     } finally {
       this.connected = false;
       this.stopStatsPolling();

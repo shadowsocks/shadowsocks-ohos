@@ -37,11 +37,35 @@
 //! relay TCP only.
 
 use std::fmt;
+use std::time::Duration;
 
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::obfs;
 use crate::v2ray_plugin::{self, V2rayPluginConfig};
+
+/// Back-off between retries after a transient accept failure, so a resource
+/// shortage cannot turn the accept loop into a busy loop.
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(100);
+
+/// Whether an `accept` error concerns only the pending connection (retry) as
+/// opposed to the listening socket itself (give up).
+fn is_transient_accept_error(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind;
+    matches!(
+        e.kind(),
+        ErrorKind::ConnectionAborted
+            | ErrorKind::ConnectionReset
+            | ErrorKind::Interrupted
+            | ErrorKind::WouldBlock
+            | ErrorKind::TimedOut
+    ) || matches!(
+        e.raw_os_error(),
+        // EMFILE / ENFILE / ENOBUFS / ENOMEM: out of descriptors or buffers;
+        // the listener survives, so keep it and retry after a back-off.
+        Some(libc::EMFILE) | Some(libc::ENFILE) | Some(libc::ENOBUFS) | Some(libc::ENOMEM)
+    )
+}
 
 /// A parsed SIP003 plugin specification.
 #[derive(Debug, Clone)]
@@ -186,9 +210,18 @@ pub async fn start_forwarder(
         loop {
             let (mut inbound, peer) = match listener.accept().await {
                 Ok(pair) => pair,
-                Err(e) => {
-                    log::warn!("plugin forwarder: accept failed: {e}");
+                // Per-connection errors (a peer that vanished between the
+                // SYN and the accept, a momentary fd shortage) are expected
+                // and retried; anything else means the listener itself is
+                // gone, and retrying it would spin the CPU forever.
+                Err(e) if is_transient_accept_error(&e) => {
+                    log::warn!("plugin forwarder: accept failed: {e}, retrying");
+                    tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
                     continue;
+                }
+                Err(e) => {
+                    log::error!("plugin forwarder: accept failed fatally: {e}, giving up");
+                    return;
                 }
             };
             let kind = kind.clone();
@@ -261,6 +294,25 @@ mod tests {
             }
             other => panic!("expected V2ray, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn accept_errors_are_classified() {
+        use std::io::{Error, ErrorKind};
+        // per-connection failures: keep the listener and retry
+        assert!(is_transient_accept_error(&Error::from(
+            ErrorKind::ConnectionAborted
+        )));
+        assert!(is_transient_accept_error(&Error::from_raw_os_error(
+            libc::EMFILE
+        )));
+        // the listener itself is gone: retrying would spin forever
+        assert!(!is_transient_accept_error(&Error::from_raw_os_error(
+            libc::EBADF
+        )));
+        assert!(!is_transient_accept_error(&Error::from(
+            ErrorKind::InvalidInput
+        )));
     }
 
     #[test]

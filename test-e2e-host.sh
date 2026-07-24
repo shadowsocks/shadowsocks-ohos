@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/native/sslocal-ffi"
 
-echo "=== 1/2 host tests (incl. SOCKS5 e2e round-trip) ==="
+echo "=== 1/3 host tests (incl. SOCKS5 e2e round-trip) ==="
 cargo test
 
 echo "=== 2/3 cross-compile check for aarch64-unknown-linux-ohos ==="

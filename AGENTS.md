@@ -106,7 +106,11 @@ Generated/ignored paths: `entry/libs/` (Rust staticlib output), `**/build`,
   `sslocal.startTunFd(profile.toTunConfig(aclPath), tunFd)`. The core's
   smoltcp-based tun stack terminates TCP/UDP flows and re-establishes them
   through the shadowsocks tunnel — the role tun2socks plays in the Android
-  client.
+  client. `sslocal_start_tun_fd` **dups** the descriptor so the core owns its
+  own copy: the tun device closes the fd it was given when the runtime is torn
+  down (in the background, see `sslocal_stop`), while `VpnConnection.destroy()`
+  closes the app's — sharing one number would risk a second close landing on an
+  unrelated descriptor.
 - **Policy routes**: each profile carries a `route` (the same constants as
   shadowsocks-android's `Acl`: `all`, `bypass-lan`, `bypass-china`,
   `bypass-lan-china`, `gfwlist`, `china-list`). For any route ≠ `all` the VPN

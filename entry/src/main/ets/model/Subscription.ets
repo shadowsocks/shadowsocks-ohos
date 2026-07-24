@@ -40,13 +40,28 @@ export class Subscription {
 
 /** Persists the subscription list as a JSON file via JsonStore. */
 export class SubscriptionStore {
+  /**
+   * Rebuilds a Subscription from a parsed JSON object. JSON.parse yields
+   * plain objects, so the class methods (`ensureId`) are absent until the
+   * fields are copied onto a real instance — same reason ProfileStore has a
+   * `fromJson`.
+   */
+  static fromJson(parsed: Subscription): Subscription {
+    const subscription = new Subscription();
+    subscription.id = parsed.id ?? '';
+    subscription.url = parsed.url ?? '';
+    subscription.updatedAt = parsed.updatedAt ?? 0;
+    return subscription;
+  }
+
   static async getAll(context: common.Context): Promise<Subscription[]> {
     const raw = await JsonStore.read(context, STORE_SUBSCRIPTIONS);
     if (raw.length === 0) {
       return [];
     }
     try {
-      return JSON.parse(raw) as Subscription[];
+      const parsed = JSON.parse(raw) as Subscription[];
+      return parsed.map((s) => SubscriptionStore.fromJson(s));
     } catch (e) {
       return [];
     }

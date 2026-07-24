@@ -51,6 +51,15 @@ const VPN_ABILITY: Want = {
 };
 
 /**
+ * Marker page served by the host running the test (`python3 -m http.server
+ * 8000`, see docs/hos-emulator-vpn.md). **Point this at the host's own address
+ * before running** — it is reachable only from the machine that serves it.
+ */
+const MARKER_URL = 'http://192.168.0.102:8000/e2e.txt';
+/** Text the marker page must contain. */
+const MARKER_BODY = 'shadowsocks-ohos e2e OK';
+
+/**
  * On-device end-to-end test for the VPN path. Self-contained: starts
  * SsVpnExtensionAbility (which brings up vpn-tun and the native core in tun
  * mode, using the currently selected profile), fetches a marker page through
@@ -74,7 +83,7 @@ export default function vpnE2eTest() {
         // give the extension a moment to create the tun and start the core
         await new Promise<void>((resolve) => setTimeout(resolve, 3000));
 
-        const url = 'http://192.168.0.102:8000/e2e.txt';
+        const url = MARKER_URL;
         const req = http.createHttp();
         try {
           const resp = await req.request(url, {
@@ -86,7 +95,7 @@ export default function vpnE2eTest() {
           hilog.info(0x0000, TAG, 'GET %{public}s -> %{public}d %{public}s',
             url, resp.responseCode, body);
           expect(resp.responseCode).assertEqual(200);
-          expect(body.includes('shadowsocks-ohos e2e OK')).assertTrue();
+          expect(body.includes(MARKER_BODY)).assertTrue();
         } finally {
           req.destroy();
         }

@@ -44,7 +44,9 @@ export "CARGO_TARGET_${TARGET_UPPER}_AR"="$LLVM_BIN/llvm-ar"
 cd "$CRATE_DIR"
 CARGO_FLAGS=()
 [[ "$PROFILE" == "release" ]] && CARGO_FLAGS+=(--release)
-cargo build --target "$TARGET" "${CARGO_FLAGS[@]}" "$@"
+# `${arr[@]+"${arr[@]}"}` because bash 3.2 (macOS) aborts under `set -u` when
+# an empty array is expanded — which is exactly the PROFILE=debug case.
+cargo build --target "$TARGET" ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} "$@"
 
 mkdir -p "$LIBS_DIR/$ABI"
 cp "$CRATE_DIR/target/$TARGET/$PROFILE/libsslocal_core.a" "$LIBS_DIR/$ABI/"

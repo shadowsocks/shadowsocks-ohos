@@ -63,6 +63,12 @@ struct ProfileEdit {
   @State pluginOpts: string = '';
   /** PLUGINS plus the profile's current plugin when it is not a preset. */
   @State pluginOptions: string[] = PLUGINS;
+  /**
+   * Fields the form does not expose but that must survive an edit — losing
+   * `subscriptionId` would detach the profile from its subscription, and the
+   * next subscription update would then re-add it as a duplicate.
+   */
+  private editedProfile: Profile | null = null;
 
   aboutToAppear(): void {
     const params = router.getParams() as EditParams | null;
@@ -72,6 +78,7 @@ struct ProfileEdit {
       ProfileStore.getAll(abilityContext()).then((profiles) => {
         const profile = profiles.find((p) => p.id === id);
         if (profile !== undefined) {
+          this.editedProfile = profile;
           this.name = profile.name;
           this.host = profile.host;
           this.remotePort = profile.remotePort.toString();
@@ -101,8 +108,15 @@ struct ProfileEdit {
       promptAction.showToast({ message: 'Server, password and method are required' });
       return;
     }
+    const existing = this.editedProfile;
     const profile = new Profile();
     profile.id = this.profileId;
+    // carry over the fields this form does not edit
+    if (existing !== null) {
+      profile.subscriptionId = existing.subscriptionId;
+      profile.localAddress = existing.localAddress;
+      profile.localPort = existing.localPort;
+    }
     profile.name = this.name.trim().length > 0 ? this.name.trim() : this.host.trim();
     profile.host = this.host.trim();
     profile.remotePort = Number.parseInt(this.remotePort, 10) || 8388;

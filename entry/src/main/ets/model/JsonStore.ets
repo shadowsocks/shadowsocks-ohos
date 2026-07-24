@@ -73,7 +73,10 @@ export class JsonStore {
 
   static async remove(context: common.Context, name: string): Promise<void> {
     try {
-      fs.unlink(JsonStore.pathFor(context, name));
+      // unlinkSync, not unlink: the async form rejects instead of throwing, so
+      // its "file is absent" failure would escape this try as an unhandled
+      // rejection (TrafficStatsStore.clear hits that on every VPN start).
+      fs.unlinkSync(JsonStore.pathFor(context, name));
     } catch (e) {
       // not present
     }

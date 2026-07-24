@@ -159,14 +159,17 @@ export default class SsVpnExtensionAbility extends VpnExtensionAbility {
     if (sslocal.isRunning()) {
       sslocal.stop();
     }
-    for (const conn of this.statConnections) {
+    // iterate a copy: closing a connection fires its 'close' handler, which
+    // removes it from this.statConnections
+    const connections = this.statConnections.slice();
+    this.statConnections = [];
+    for (const conn of connections) {
       try {
         await conn.close();
       } catch (e) {
         // already closed
       }
     }
-    this.statConnections = [];
     if (this.statServer !== null) {
       try {
         await this.statServer.close();
@@ -225,13 +228,16 @@ export default class SsVpnExtensionAbility extends VpnExtensionAbility {
    * Binds the traffic-stat TCP endpoint to the first free loopback port from
    * STAT_PORTS and returns the bound port. Each accepted connection delivers
    * 16-byte little-endian (tx, rx) u64 cumulative counters.
+   *
+   * A fresh server instance is constructed per attempt: re-listening on an
+   * instance whose bind already failed is not guaranteed to work.
    */
   private async startStatServer(): Promise<number> {
-    const server = socket.constructTCPSocketServerInstance();
-    server.on('connect', (conn: socket.TCPSocketConnection) => {
-      this.onStatConnection(conn);
-    });
     for (const port of STAT_PORTS) {
+      const server = socket.constructTCPSocketServerInstance();
+      server.on('connect', (conn: socket.TCPSocketConnection) => {
+        this.onStatConnection(conn);
+      });
       try {
         await server.listen({ address: '127.0.0.1', port: port, family: 1 });
         this.statServer = server;
@@ -239,13 +245,33 @@ export default class SsVpnExtensionAbility extends VpnExtensionAbility {
         return port;
       } catch (e) {
         hilog.warn(0x0000, TAG, 'stat port %{public}d unavailable, trying next', port);
+        try {
+          await server.close();
+        } catch (closeError) {
+          // never bound
+        }
       }
     }
     throw new Error('no stat port available');
   }
 
+  /**
+   * Handles one flow-stat report. The core opens a **new** connection for
+   * every 500 ms sample and closes it after the 16-byte write, so each
+   * connection is dropped from the tracking list as soon as it ends —
+   * otherwise the list would grow by two entries per second for as long as
+   * the VPN is up.
+   */
   private onStatConnection(conn: socket.TCPSocketConnection): void {
     this.statConnections.push(conn);
+    const forget = () => {
+      const index = this.statConnections.indexOf(conn);
+      if (index >= 0) {
+        this.statConnections.splice(index, 1);
+      }
+    };
+    conn.on('close', () => forget());
+    conn.on('error', () => forget());
     conn.on('message', (info: socket.SocketMessageInfo) => {
       const buf = info.message;
       if (buf.byteLength < 16) {

@@ -37,11 +37,20 @@ interface VpnExtensionDynamic {
   updateVpnAuthorizedState?: (bundleName: string) => number;
 }
 
-/** Grants VPN authorization for `bundleName`. Returns the native ret code, or -1 when unavailable. */
+/**
+ * Grants VPN authorization for `bundleName`. Returns the native ret code, or
+ * -1 when the call is unavailable or rejected — this is a best-effort
+ * emulator workaround, so a retail runtime that permission-gates the write
+ * must not turn it into a failed connect.
+ */
 export function grantVpnAuthorization(bundleName: string): number {
   const ext = vpnExtension as unknown as VpnExtensionDynamic;
   if (typeof ext.updateVpnAuthorizedState !== 'function') {
     return -1;
   }
-  return ext.updateVpnAuthorizedState(bundleName);
+  try {
+    return ext.updateVpnAuthorizedState(bundleName);
+  } catch (e) {
+    return -1;
+  }
 }

@@ -28,12 +28,30 @@ fn main() {
         exit(2);
     }
     match args[1].as_str() {
-        "echo" => run_echo(&args[2]),
-        "server" => run_server(&args[2]),
-        "tun" => run_tun(&args[2], &args[3]),
-        "client" => run_client(&args[2], &args[3]),
+        "echo" => run_echo(arg(&args, 2, "echo <bind_addr>")),
+        "server" => run_server(arg(&args, 2, "server <config_json>")),
+        "tun" => run_tun(
+            arg(&args, 2, "tun <config_json> <ifname>"),
+            arg(&args, 3, "tun <config_json> <ifname>"),
+        ),
+        "client" => run_client(
+            arg(&args, 2, "client <host:port> <message>"),
+            arg(&args, 3, "client <host:port> <message>"),
+        ),
         other => {
             eprintln!("unknown subcommand: {other}");
+            exit(2);
+        }
+    }
+}
+
+/// Positional argument `index`, or a usage error — a missing argument should
+/// print what the subcommand expects, not an index-out-of-bounds panic.
+fn arg<'a>(args: &'a [String], index: usize, usage: &str) -> &'a str {
+    match args.get(index) {
+        Some(value) => value,
+        None => {
+            eprintln!("usage: net_helper {usage}");
             exit(2);
         }
     }
