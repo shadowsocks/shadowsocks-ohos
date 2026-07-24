@@ -64,6 +64,13 @@ export class Profile {
   subscriptionId: string = '';
   localAddress: string = '127.0.0.1';
   localPort: number = DEFAULT_SOCKS_PORT;
+  /**
+   * SIP003 plugin name ('' = no plugin), e.g. `obfs-local` or `v2ray-plugin`.
+   * The native core runs known plugins in-process (see native/sslocal-ffi).
+   */
+  plugin: string = '';
+  /** SIP003 plugin options (`k=v;...`), e.g. `obfs=tls;obfs-host=example.com`. */
+  pluginOpts: string = '';
 
   /** Assigns a fresh random id if this profile does not have one yet. */
   ensureId(): void {
@@ -171,10 +178,23 @@ export class Profile {
       name = decodeURIComponent(body.substring(hashIndex + 1));
       body = body.substring(0, hashIndex);
     }
-    // strip plugin/query parts — plugins are not supported yet
+    // SIP002 query part: ?plugin=name%3Bopts (percent-encoded as a whole)
+    let plugin = '';
+    let pluginOpts = '';
     const queryIndex = body.indexOf('?');
     if (queryIndex >= 0) {
+      const query = body.substring(queryIndex + 1);
       body = body.substring(0, queryIndex);
+      const params = query.split('&');
+      for (const param of params) {
+        const eq = param.indexOf('=');
+        if (eq > 0 && param.substring(0, eq) === 'plugin') {
+          const decoded = decodeURIComponent(param.substring(eq + 1));
+          const semi = decoded.indexOf(';');
+          plugin = semi >= 0 ? decoded.substring(0, semi) : decoded;
+          pluginOpts = semi >= 0 ? decoded.substring(semi + 1) : '';
+        }
+      }
     }
     const atIndex = body.lastIndexOf('@');
     let method = '';
@@ -228,12 +248,14 @@ export class Profile {
     profile.remotePort = port;
     profile.method = method;
     profile.password = password;
+    profile.plugin = plugin;
+    profile.pluginOpts = pluginOpts;
     return profile;
   }
 
   /** JSON config for the native sslocal core with a local SOCKS5 service. */
   toLocalConfig(): string {
-    const config: object = Object({
+    const config: Record<string, Object> = {
       'locals': [Object({
         'protocol': 'socks',
         'local_address': this.localAddress,
@@ -243,7 +265,11 @@ export class Profile {
       'server_port': this.remotePort,
       'password': this.password,
       'method': this.method,
-    });
+    };
+    if (this.plugin.length > 0) {
+      config['plugin'] = this.plugin;
+      config['plugin_opts'] = this.pluginOpts;
+    }
     return JSON.stringify(config);
   }
 
@@ -268,6 +294,10 @@ export class Profile {
       'method': this.method,
       'mode': 'tcp_and_udp',
     };
+    if (this.plugin.length > 0) {
+      config['plugin'] = this.plugin;
+      config['plugin_opts'] = this.pluginOpts;
+    }
     if (this.route !== ROUTE_ALL && aclPath.length > 0) {
       config['acl'] = aclPath;
     }

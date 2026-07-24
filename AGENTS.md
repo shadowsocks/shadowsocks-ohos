@@ -30,8 +30,8 @@ entry/                        main (and only) HAP module
     ets/entryability/         EntryAbility.ets — UIAbility entry; registers the
                               ability context in AppStorage (see AppContext.ets)
     ets/pages/                Index.ets (profile list + connect + stats bar),
-                              ProfileEdit.ets (profile form, method/route pickers),
-                              Subscription.ets (subscription management)
+                              ProfileEdit.ets (profile form, method/route/plugin
+                              pickers), Subscription.ets (subscription management)
     ets/model/                Profile.ets (SIP002 ss:// parsing, config
                               serialization), ProfileStore.ets (multi-profile
                               list + selection), Subscription.ets (subscription
@@ -48,18 +48,29 @@ entry/                        main (and only) HAP module
     cpp/napi_init.cpp         NAPI shim; exports the libsslocal.so module
     cpp/CMakeLists.txt        builds libsslocal.so, links libsslocal_core.a
     cpp/types/libsslocal/     ArkTS typings (Index.d.ts) for libsslocal.so
-  src/test/                   ArkTS unit tests (hypium): ss:// URL parsing,
-                              SOCKS and tun config serialization (incl. ACL
-                              injection), subscription body parsing
+  src/test/                   ArkTS unit tests (hypium): ss:// URL parsing
+                              (incl. SIP003 plugin query), SOCKS and tun config
+                              serialization (incl. ACL injection, plugin fields),
+                              subscription body parsing
   src/ohosTest/               on-device tests exercising the NAPI surface
                               (including startTunFd) on emulator/device
 native/
   sslocal-ffi/                Rust crate: C ABI over shadowsocks-service
     src/lib.rs                extern "C" API: sslocal_start, sslocal_start_tun_fd,
                               sslocal_stop, sslocal_is_running, sslocal_last_error,
-                              sslocal_version; single-instance model
+                              sslocal_version; single-instance model; intercepts
+                              SIP003 plugin fields before handing the config to
+                              shadowsocks-service
+    src/plugin.rs             SIP003 plugin dispatch + loopback forwarder
+    src/obfs.rs               simple-obfs http/tls client wrappers, vendored
+                              from meow-rs (GPL-3.0)
+    src/v2ray_plugin.rs       v2ray-plugin ws(+tls) client, adapted from
+                              meow-rs on top of the meow-transport crate
     tests/e2e.rs              in-process server + sslocal via the C ABI + SOCKS5
                               round-trip through the encrypted tunnel
+    tests/e2e_plugin.rs       same, with the connection obfuscated through the
+                              in-process simple-obfs plugin (fake obfs server
+                              shim in front of the in-process ssserver)
     examples/net_helper.rs    helper binary used by the tun e2e
   build-ohos.sh               cross-compile the Rust core for
                               aarch64-unknown-linux-ohos; installs the staticlib
@@ -114,6 +125,27 @@ Generated/ignored paths: `entry/libs/` (Rust staticlib output), `**/build`,
   included) outside the tunnel. On API < 22 there is no per-socket hook; the
   ability logs a warning and the server must be reachable through a more
   specific route.
+- **SIP003 plugins**: profiles carry `plugin`/`pluginOpts` (parsed from the
+  `?plugin=` query of ss:// URLs, editable in ProfileEdit) which the
+  serializers emit as the standard `plugin`/`plugin_opts` server fields.
+  `sslocal-ffi` intercepts those fields before `Config::load_from_str` —
+  external plugin processes cannot be spawned on HarmonyOS, so known plugins
+  run **in-process**: for each server entry with a plugin it starts a
+  loopback TCP forwarder (127.0.0.1, ephemeral port) that dials the real
+  server and wraps the stream in the obfuscation layer, then rewrites the
+  entry's `server`/`server_port` to the forwarder and strips the plugin
+  fields, exactly as if an external `obfs-local` were running. Supported
+  names: `obfs-local`/`simple-obfs`/`obfs` (`obfs=http|tls;obfs-host=…`) and
+  `v2ray-plugin` (`mode=websocket`, optional `tls`, `host`, `path`,
+  `header=K:V`, `skip-cert-verify`); any other name fails the start with
+  `SSLOCAL_ERR_BAD_CONFIG`. The obfuscation code is reused from
+  [meow-rs](https://github.com/madeye/meow-rs) (GPL-3.0): the
+  `meow-transport` crate (git dependency, tag v0.18.0, TLS + WebSocket
+  layers) plus `simple_obfs.rs`/`v2ray_plugin.rs` vendored/adapted into
+  `native/sslocal-ffi/src/` — do not "upgrade" the vendored copies blindly;
+  `obfs.rs` carries a local fix in `HttpObfs::poll_read` (a 0-byte
+  header-only read must not surface as EOF to `copy_bidirectional`). UDP is
+  not transported through plugins (neither plugin supports it upstream).
 - NAPI surface (see `entry/src/main/cpp/types/libsslocal/Index.d.ts`):
   `start(configJson)`, `startTunFd(configJson, tunFd)`,
   `setStatAddress(addr)`, `stop()`,
@@ -226,8 +258,12 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
 
 ## Known gaps
 
-- No plugin support (v2ray-plugin etc.); plugin parts of ss:// URLs are
-  stripped on import.
+- SIP003 plugins: only the built-in `obfs-local` (simple-obfs http/tls) and
+  `v2ray-plugin` (mode=websocket, optional TLS) are supported, run in-process
+  by the native core (see "SIP003 plugins" above); other plugin names are
+  rejected (external plugin processes cannot be spawned on HarmonyOS). UDP
+  does not pass through plugins (neither plugin supports UDP upstream either);
+  with a plugin active, UDP associations time out.
 - No `custom-rules` route (shadowsocks-android's user-edited ACL); only the
   six preset routes.
 - Starting the VPN requires the system consent app

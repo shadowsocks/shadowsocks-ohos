@@ -43,6 +43,8 @@ export class ProfileStore {
     profile.subscriptionId = parsed.subscriptionId ?? '';
     profile.localAddress = parsed.localAddress ?? '127.0.0.1';
     profile.localPort = parsed.localPort ?? 1080;
+    profile.plugin = parsed.plugin ?? '';
+    profile.pluginOpts = parsed.pluginOpts ?? '';
     return profile;
   }
 
