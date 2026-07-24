@@ -14,7 +14,7 @@ set -euo pipefail
 
 UNSIGNED="${1:?usage: sign-hap-debug.sh <unsigned.hap> [signed.hap]}"
 SIGNED="${2:-${UNSIGNED%-unsigned.hap}-signed.hap}"
-BUNDLE_NAME="${BUNDLE_NAME:-com.github.shadowsocks.harmony}"
+BUNDLE_NAME="${BUNDLE_NAME:-com.xbt.project}"
 
 # Locate the OpenHarmony toolchains/lib that holds hap-sign-tool.jar + samples.
 if [[ -z "${OHOS_SDK_HOME:-}" ]]; then

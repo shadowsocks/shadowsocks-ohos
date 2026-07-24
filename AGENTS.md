@@ -8,7 +8,7 @@ directory is `harmony/` in that repo) and shares the same Rust core
 (`shadowsocks-rust`) with the Android app through a C ABI + NAPI bridge.
 
 - **App layer**: ArkTS/ArkUI, Stage model, API 12+ (`compatibleSdkVersion
-  5.0.0(12)`), bundle `com.github.shadowsocks.harmony`, version 5.3.5,
+  5.0.0(12)`), bundle `com.xbt.project`, version 5.3.5,
   GPL-3.0-or-later.
 - **Native layer**: the Rust crate `native/sslocal-ffi` path-depends on
   `../../../core/src/main/rust/shadowsocks-rust/crates/shadowsocks-service`
@@ -31,7 +31,9 @@ entry/                        main (and only) HAP module
                               ability context in AppStorage (see AppContext.ets)
     ets/pages/                Index.ets (profile list + connect + stats bar),
                               ProfileEdit.ets (profile form, method/route/plugin
-                              pickers), Subscription.ets (subscription management)
+                              pickers), Subscription.ets (subscription management),
+                              VpnGrant.ts (undocumented updateVpnAuthorizedState
+                              shim for the emulator's missing consent app)
     ets/model/                Profile.ets (SIP002 ss:// parsing, config
                               serialization), ProfileStore.ets (multi-profile
                               list + selection), Subscription.ets (subscription
@@ -208,7 +210,7 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   (including `startTunFd`) on a HarmonyOS emulator/device from DevEco Studio,
   or headless: build the ohosTest HAP (`-p module=entry@ohosTest`), sign and
   install both HAPs, then
-  `hdc shell aa test -b com.github.shadowsocks.harmony -m entry_test -s unittest OpenHarmonyTestRunner`.
+  `hdc shell aa test -b com.xbt.project -m entry_test -s unittest OpenHarmonyTestRunner`.
 
 ## Code style and conventions
 
@@ -266,11 +268,16 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   with a plugin active, UDP associations time out.
 - No `custom-rules` route (shadowsocks-android's user-edited ACL); only the
   six preset routes.
-- Starting the VPN requires the system consent app
+- Starting the VPN normally requires the system consent app
   `com.huawei.hmos.vpndialog`, which is **absent from the public OpenHarmony
-  emulator image** — `startVpnExtensionAbility` fails there ("bundle not
-  exist"). The full VPN flow (tun routing, stats, ACL) can only run on a
-  real HarmonyOS device or an emulator image that ships the dialog.
+  emulator image**. Working around it requires writing the settingsdata
+  grant (`vpnext_mode → "1"` plus a bundle-keyed row) into the userdata
+  settingsdata DB offline; `Index.ets` additionally calls the undocumented
+  `vpnExtension.updateVpnAuthorizedState` (via `pages/VpnGrant.ts`) as a
+  best-effort runtime grant (ineffective on the 6.1.1 emulator build — the
+  write never reaches the queried store). The full VPN flow (tun routing,
+  stats, ACL) is verified working on the 6.1.1 emulator with the grant rows
+  present. Background and recipes: `docs/hos-emulator-vpn.md`.
 - The UI's connected state is local to the page: it does not survive an app
   restart (no VPN-state query is wired up yet).
 - API < 22 runtimes lack `protectProcessNet`; see the bypass note above.
