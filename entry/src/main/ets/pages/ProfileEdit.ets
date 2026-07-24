@@ -35,6 +35,18 @@ const METHODS: string[] = [
   '2022-blake3-chacha20-poly1305',
 ];
 
+/**
+ * SIP003 plugins the native core runs in-process ('none' = direct
+ * connection). The matching option string is edited free-form below.
+ */
+const PLUGINS: string[] = ['none', 'obfs-local', 'v2ray-plugin'];
+
+const PLUGIN_OPTS_HINTS: string[] = [
+  '',
+  'obfs=tls;obfs-host=www.example.com',
+  'mode=websocket;tls;host=www.example.com;path=/',
+];
+
 /** Profile editor, reached from the profile list (add or edit). */
 @Entry
 @Component
@@ -47,6 +59,10 @@ struct ProfileEdit {
   @State methodIndex: number = 1;
   @State methodCustom: string = '';
   @State routeIndex: number = 0;
+  @State pluginIndex: number = 0;
+  @State pluginOpts: string = '';
+  /** PLUGINS plus the profile's current plugin when it is not a preset. */
+  @State pluginOptions: string[] = PLUGINS;
 
   aboutToAppear(): void {
     const params = router.getParams() as EditParams | null;
@@ -64,6 +80,12 @@ struct ProfileEdit {
           this.methodIndex = methodIndex >= 0 ? methodIndex : -1;
           this.methodCustom = methodIndex >= 0 ? '' : profile.method;
           this.routeIndex = Math.max(0, ALL_ROUTES.indexOf(profile.route));
+          if (profile.plugin.length > 0 && PLUGINS.indexOf(profile.plugin) < 0) {
+            // keep an imported non-preset plugin visible instead of dropping it
+            this.pluginOptions = PLUGINS.concat([profile.plugin]);
+          }
+          this.pluginIndex = Math.max(0, this.pluginOptions.indexOf(profile.plugin));
+          this.pluginOpts = profile.pluginOpts;
         }
       });
     }
@@ -87,6 +109,9 @@ struct ProfileEdit {
     profile.password = this.password;
     profile.method = method;
     profile.route = ALL_ROUTES[this.routeIndex] ?? ROUTE_ALL;
+    profile.plugin = this.pluginOptions[this.pluginIndex] === 'none' ?
+      '' : this.pluginOptions[this.pluginIndex];
+    profile.pluginOpts = this.pluginOpts.trim();
     profile.ensureId();
     try {
       await ProfileStore.upsert(abilityContext(), profile);
@@ -150,6 +175,22 @@ struct ProfileEdit {
           this.routeIndex = index;
         },
       })
+
+      LabeledSelect({
+        label: 'Plugin',
+        options: this.pluginOptions,
+        selected: this.pluginIndex,
+        onSelect: (index: number) => {
+          this.pluginIndex = index;
+        },
+      })
+      if (this.pluginIndex > 0) {
+        TextInput({
+          placeholder: PLUGIN_OPTS_HINTS[this.pluginIndex] || 'Plugin options (k=v;...)',
+          text: this.pluginOpts,
+        })
+          .onChange((value) => this.pluginOpts = value)
+      }
 
       Blank()
 

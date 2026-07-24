@@ -26,6 +26,14 @@ env_logger = "0.11"
 
 [dependencies]
 log = "0.4"
+serde_json = "1"
+base64 = "0.22"
+rand = "0.9"
+futures = "0.3"
+# TLS + WebSocket transport layers for the built-in v2ray-plugin SIP003
+# client (meow-rs, GPL-compatible; leaf crate — rustls + tokio-tungstenite +
+# webpki-roots, no other meow-* dependencies).
+meow-transport = { git = "https://github.com/madeye/meow-rs", tag = "v0.18.0" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -36,6 +44,12 @@ shadowsocks-service = { path = "../../../core/src/main/rust/shadowsocks-rust/cra
     "aead-cipher-2022",
     "local-dns",
 ] }
-tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "net",
+    "io-util",
+    "macros",
+    "time",
+] }
 
 [workspace]
