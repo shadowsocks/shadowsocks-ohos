@@ -20,14 +20,18 @@
 import { vpnExtension } from '@kit.NetworkKit';
 import { Want } from '@kit.AbilityKit';
 import { promptAction, router } from '@kit.ArkUI';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Profile } from '../model/Profile';
 import { ProfileStore } from '../model/ProfileStore';
 import { abilityContext } from '../model/AppContext';
 import { formatBytes, formatRate, TrafficStats, TrafficStatsStore } from '../model/TrafficStats';
+import { grantVpnAuthorization } from './VpnGrant';
+
+const TAG = 'Index';
 
 const VPN_ABILITY: Want = {
   deviceId: '',
-  bundleName: 'com.github.shadowsocks.harmony',
+  bundleName: 'com.xbt.project',
   abilityName: 'SsVpnExtensionAbility',
 };
 
@@ -108,13 +112,30 @@ struct Index {
       promptAction.showToast({ message: 'Please add and select a profile first' });
       return;
     }
+    // The public emulator image ships no system consent app
+    // (com.huawei.hmos.vpndialog), so startVpnExtensionAbility cannot obtain
+    // authorization the usual way there. Grant it up front through the
+    // module's own updateVpnAuthorizedState (the same settingsdata write the
+    // consent app performs). On retail devices the write is either ignored or
+    // rejected and the normal consent dialog still shows; the retry below
+    // covers runtimes where the first start already failed before the grant.
+    const ret = grantVpnAuthorization(VPN_ABILITY.bundleName ?? '');
+    hilog.info(0x0000, TAG, 'updateVpnAuthorizedState ret %{public}d', ret);
     try {
       await vpnExtension.startVpnExtensionAbility(VPN_ABILITY);
-      this.connected = true;
-      this.startStatsPolling();
     } catch (e) {
-      promptAction.showToast({ message: `Failed to start VPN: ${JSON.stringify(e)}` });
+      hilog.warn(0x0000, TAG, 'vpn start rejected (%{public}s), retrying after self-grant',
+        JSON.stringify(e));
+      try {
+        grantVpnAuthorization(VPN_ABILITY.bundleName ?? '');
+        await vpnExtension.startVpnExtensionAbility(VPN_ABILITY);
+      } catch (e2) {
+        promptAction.showToast({ message: `Failed to start VPN: ${JSON.stringify(e2)}` });
+        return;
+      }
     }
+    this.connected = true;
+    this.startStatsPolling();
   }
 
   private async disconnect(): Promise<void> {

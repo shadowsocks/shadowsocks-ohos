@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.github.shadowsocks.harmony",
+    "bundleName": "com.xbt.project",
     "vendor": "shadowsocks",
     "versionCode": 5030550,
     "versionName": "5.3.5",
