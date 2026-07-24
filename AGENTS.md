@@ -201,10 +201,21 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   2. `cargo check --target aarch64-unknown-linux-ohos` (real OHOS SDK clang if
      `OHOS_NDK_HOME` is set, else the zig cc shim).
   3. Tun packet-routing e2e (`native/tun-e2e-linux.sh`): a real TCP flow into
-     a tun device, asserted to round-trip through the tunnel. Needs Linux +
-     root (CAP_NET_ADMIN, `/dev/net/tun`); on macOS run it via
-     `native/run-tun-e2e-docker.sh` (Docker + cargo-zigbuild). All three steps
-     also run in CI (`.github/workflows/harmony.yml` in the parent repo).
+     a tun device, asserted to round-trip through the tunnel. Needs Linux,
+     `/dev/net/tun` and CAP_NET_ADMIN — run as root, or as any user with
+     passwordless sudo (the script escalates itself); on macOS run it via
+     `native/run-tun-e2e-docker.sh` (Docker + cargo-zigbuild), which builds
+     the helper for the host architecture so the container runs it natively.
+- **CI** — `.github/workflows/ci.yml` runs rustfmt, clippy and all three
+  `test-e2e-host.sh` steps (including the tun e2e, which a GitHub Linux
+  runner can do natively) on every push and pull request. Because the Rust
+  crate path-depends on the shared `shadowsocks-rust` checkout *outside* this
+  repository, the workflow clones it to the sibling path
+  `../core/src/main/rust/shadowsocks-rust` at the ref in `SHADOWSOCKS_RUST_REF`
+  — keep that in step with shadowsocks-android's submodule pin. The ArkTS
+  tests and the HAP build are **not** in CI: they need the DevEco
+  command-line tools, which are not publicly downloadable (see
+  `docs/hos-emulator-vpn.md` §4); run those locally.
 - **ArkTS unit tests** — `entry/src/test` (hypium): `ss://` URL parsing, both
   SOCKS and tun config serialization (including ACL injection), subscription
   body parsing. Run from DevEco Studio or headless:

@@ -375,6 +375,10 @@ fn recover_tun_name(fd: c_int) -> Option<String> {
     if rc < 0 {
         return None;
     }
+    // `c_char` is signed on x86_64 but unsigned on aarch64, so this cast is
+    // required on one and a no-op on the other — which is why clippy's
+    // unnecessary_cast has to be silenced rather than the cast removed.
+    #[allow(clippy::unnecessary_cast)]
     let name: Vec<u8> = ifr
         .ifr_name
         .iter()

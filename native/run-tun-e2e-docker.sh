@@ -9,8 +9,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CRATE_DIR="$SCRIPT_DIR/sslocal-ffi"
-TARGET="x86_64-unknown-linux-musl"
 OUT_DIR="$SCRIPT_DIR/.tun-e2e"
+
+# Build for the host's architecture: docker runs the container natively, and an
+# x86_64 helper on an arm64 host (every Apple Silicon Mac — this script's main
+# audience) would go through qemu user-mode emulation, which segfaults the
+# helper often enough to make the e2e flaky. Override with TARGET.
+case "$(uname -m)" in
+    arm64 | aarch64) TARGET="${TARGET:-aarch64-unknown-linux-musl}" ;;
+    *) TARGET="${TARGET:-x86_64-unknown-linux-musl}" ;;
+esac
 
 echo "=== building static musl helper ($TARGET) ==="
 rustup target list --installed | grep -q "$TARGET" || rustup target add "$TARGET"
