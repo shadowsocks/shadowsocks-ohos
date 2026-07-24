@@ -17,7 +17,7 @@
  *                                                                             *
  *******************************************************************************/
 
-import { describe, expect, it } from '@ohos/hypium';
+import { describe, expect, it, Hypium } from '@ohos/hypium';
 import { http, vpnExtension } from '@kit.NetworkKit';
 import { Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -33,12 +33,13 @@ interface CoreStats {
 
 /** Reads the core's persisted flow counters (<filesDir>/store/traffic_stats.json). */
 function readCoreStats(): CoreStats | null {
-  const context = abilityDelegatorRegistry.getAbilityDelegator().getAppContext();
-  const path = `${context.filesDir}/store/traffic_stats.json`;
   try {
+    const context = abilityDelegatorRegistry.getAbilityDelegator().getAppContext();
+    const path = `${context.filesDir}/store/traffic_stats.json`;
     const raw = fileIo.readTextSync(path);
     return JSON.parse(raw) as CoreStats;
   } catch (e) {
+    hilog.error(0x0000, TAG, 'readCoreStats failed: %{public}s', JSON.stringify(e));
     return null;
   }
 }
@@ -65,6 +66,8 @@ const VPN_ABILITY: Want = {
 export default function vpnE2eTest() {
   describe('VpnE2eTest', () => {
     it('routes an HTTP fetch through the shadowsocks tunnel', 0, async () => {
+      // starting the VPN + fetching + stats sampling exceeds hypium's 5s default
+      Hypium.setTimeConfig(20000);
       await vpnExtension.startVpnExtensionAbility(VPN_ABILITY);
       hilog.info(0x0000, TAG, 'vpn extension started');
       try {
@@ -90,8 +93,7 @@ export default function vpnE2eTest() {
 
         // the core reports cumulative tx/rx every 500ms; let a sample persist
         await new Promise<void>((resolve) => setTimeout(resolve, 2000));
-        const context = abilityDelegatorRegistry.getAbilityDelegator().getAppContext();
-        const stats = await TrafficStatsStore.load(context);
+        const stats = readCoreStats();
         hilog.info(0x0000, TAG, 'core flow stats after fetch: tx=%{public}d rx=%{public}d',
           stats?.tx ?? -1, stats?.rx ?? -1);
         // the fetch (~30B request, ~30B page through the core) must move the

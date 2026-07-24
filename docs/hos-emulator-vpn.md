@@ -110,6 +110,51 @@ dialog was attempted exactly as before — that allow list is consumed
 service-side only and matters on retail devices, not against the client-side
 gate. The grant rows above are required regardless of the bundle name.
 
+## 2a. Emulator limitation: no packets reach the tun
+
+With the consent gate bypassed, the whole start flow succeeds on the
+emulator — extension starts, `vpn-tun` is created (address 172.19.0.x, MTU
+1500), the tun fd is handed to the core, `protectProcessNet` applies, the
+stat endpoint listens, and the core reports "tun routing started". **But no
+guest traffic is ever delivered to the tun on the public image**:
+
+- `/proc/net/dev` counters for `vpn-tun` stay at 0 while apps generate
+  traffic;
+- a trace-level `ssserver` (host-side, verified logging with a local
+  sslocal↔ssserver round-trip) records zero connections;
+- fetches from the guest succeed anyway — they escape directly through the
+  qemu slirp NAT;
+- `/proc/net/route` never shows a default route via `vpn-tun` (only the
+  /30 link route), although netsys logs `AddRoute … 0.0.0.0/0`.
+
+So the missing consent app is not the only emulator gap: the policy routing
+that should steer app traffic into the VPN interface does not take effect
+(system-side; the same flow works on real devices). An HTTP-level e2e
+through the tunnel can therefore only pass on real hardware.
+
+### On-device e2e recipe (works on a real device)
+
+`entry/src/ohosTest/ets/test/VpnE2e.test.ets` is self-contained: it starts
+`SsVpnExtensionAbility` from the test process (necessary — `aa test` tears
+down a VPN started earlier from the UI), fetches a marker page
+(`http://<host>:8000/e2e.txt`), then asserts the core's persisted flow
+counters (`<filesDir>/store/traffic_stats.json`, see
+`model/TrafficStats.ets`) moved. Host side:
+
+```sh
+ssserver -s 0.0.0.0:18388 -k test-password -m aes-256-gcm -U -v
+python3 -m http.server 8000 --directory <dir-with-e2e.txt> --bind 0.0.0.0
+# profile in the app: server 10.0.2.2:18388 (qemu host address), aes-256-gcm:test-password
+hdc shell aa test -b com.xbt.project -m entry_test -s unittest OpenHarmonyTestRunner
+```
+
+Gotchas learned: hypium's default per-spec timeout is 5 s (raise with
+`Hypium.setTimeConfig(ms)` — `setTimeOut` does not exist in hypium 1.0.19);
+`aa test` disconnects a previously running VPN extension of the same bundle;
+the emulator's guest reaches the host at `10.0.2.2` and can also reach the
+host's LAN address directly via slirp, so a successful fetch alone proves
+nothing — the core's counters (or the server log) must be checked.
+
 ## 3. Emulator image signature verification
 
 Every partition of the image has a signature file
