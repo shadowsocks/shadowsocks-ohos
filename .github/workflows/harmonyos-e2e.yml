@@ -1,0 +1,68 @@
+name: HarmonyOS on-device e2e
+
+# The ohosTest suites against a booted HarmonyOS emulator, driven by
+# ci/hos-emulator-e2e.sh (build → sign → boot → unlock → install → run).
+#
+# **Cannot run on a GitHub-hosted runner**: the Emulator binary is arm64-only
+# and the image is phone_all_arm, so it needs an Apple-silicon host exposing
+# HVF — GitHub's Apple-silicon runners do not support nested virtualization,
+# and their Intel runners (which do have HVF) cannot execute an arm64 emulator
+# at all. It therefore targets a self-hosted Apple-silicon runner.
+#
+# To enable it, register a self-hosted runner on an Apple-silicon Mac that has
+# the tools and the emulator image installed, label it `harmonyos`, and set the
+# repository variables:
+#
+#   HOS_SELF_HOSTED = true
+#   HOS_TOOLS_PATH  = /path/to/command-line-tools
+#   HOS_IMAGES_PATH = /path/to/image root (the parent of system-image/)
+#
+# Without them the job is skipped, so pushes are never left queued against an
+# offline runner. ci/hos-emulator-e2e.sh is the same entry point either way, so
+# the e2e can always be run by hand on any Mac that has both.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  emulator-e2e:
+    name: On-device e2e on the HarmonyOS emulator
+    runs-on: [self-hosted, macOS, ARM64, harmonyos]
+    timeout-minutes: 90
+    if: vars.HOS_SELF_HOSTED == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      # Keeps its checkout and cargo cache between runs, so ssserver below is
+      # usually a no-op rebuild.
+      - uses: ./.github/actions/rust-core
+
+      - name: Build ssserver for the host side of the tunnel
+        run: |
+          core="$(dirname "$GITHUB_WORKSPACE")/core/src/main/rust/shadowsocks-rust"
+          cargo build --release --manifest-path "$core/Cargo.toml" --bin ssserver
+          echo "SSSERVER=$core/target/release/ssserver" >> "$GITHUB_ENV"
+
+      - name: On-device e2e
+        env:
+          HOS_TOOLS: ${{ vars.HOS_TOOLS_PATH }}
+          HOS_IMAGES: ${{ vars.HOS_IMAGES_PATH }}
+          # Its own instance, so a developer's emulator on the same machine is
+          # left alone.
+          HOS_INSTANCE: ss_ci
+        run: ci/hos-emulator-e2e.sh
+
+      - name: Emulator log
+        if: failure()
+        run: tail -200 "$HOME/.Huawei/Emulator/deployed/ss_ci/Log/"*.log 2>/dev/null || true

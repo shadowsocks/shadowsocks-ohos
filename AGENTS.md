@@ -203,7 +203,9 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
 
 ## Testing
 
-- **`./test-e2e-host.sh`** — host-side verification, no HarmonyOS SDK needed:
+- **`./test-e2e-host.sh [tests|cross|tun ...]`** — host-side verification, no
+  HarmonyOS SDK needed. All three steps by default, or any subset by name (CI
+  runs one per workflow, so this stays the single definition of each):
   1. `cargo test` in `native/sslocal-ffi` (includes `tests/e2e.rs`: a genuine
      end-to-end SOCKS5 round-trip through an in-process shadowsocks server,
      driving sslocal through the same C ABI the NAPI layer uses).
@@ -215,34 +217,45 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
      passwordless sudo (the script escalates itself); on macOS run it via
      `native/run-tun-e2e-docker.sh` (Docker + cargo-zigbuild), which builds
      the helper for the host architecture so the container runs it natively.
-- **CI** — `.github/workflows/ci.yml` runs rustfmt, clippy and all three
-  `test-e2e-host.sh` steps (including the tun e2e, which a GitHub Linux
-  runner can do natively) on every push and pull request. Because the Rust
-  crate path-depends on the shared `shadowsocks-rust` checkout *outside* this
-  repository, the workflow clones it to the sibling path
-  `../core/src/main/rust/shadowsocks-rust` at the ref in `SHADOWSOCKS_RUST_REF`
-  — keep that in step with shadowsocks-android's submodule pin.
-  `.github/workflows/harmonyos.yml` covers the rest, for pushes to `main` and
-  on demand, in two jobs: `build` (HAP build, debug signing, ArkTS unit tests)
-  on a GitHub-hosted macOS runner, and `emulator-e2e` (the on-device suites on
-  a booted emulator) on a **self-hosted** Apple-silicon runner labelled
-  `harmonyos`. The e2e cannot be hosted — the Emulator binary and the image are
-  both arm64, so it needs HVF, which GitHub's Apple-silicon runners do not
-  expose (no nested virtualization) and whose Intel runners cannot run an arm64
-  emulator at all. That job is skipped unless the repository variables
-  `HOS_SELF_HOSTED=true`, `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are set, so
-  pushes never queue against an offline runner. Huawei's DevEco command-line
-  tools are neither publicly downloadable (`docs/hos-emulator-vpn.md` §4) nor
-  redistributable, so `build` streams them from a private S3/R2 bucket, using
-  the secrets `R2_API_TOKEN` (a Cloudflare API token) and `R2_ENDPOINT`; the S3
-  keypair is derived from them at runtime by `ci/r2-env.sh` (token ID from
-  `/tokens/verify`, secret = SHA-256 of the token value) and masked. Only the
-  352-byte manifest is fetched on a normal run: the unpacked toolchain is
-  cached under the archive's sha256 from that manifest, so a re-uploaded bundle
-  invalidates the cache by itself.
+- **CI** — one workflow per surface, so a failure names what broke instead of
+  pointing at one big job:
+  - `lint.yml` — rustfmt, clippy (`--no-deps`; the path-dependency would
+    otherwise be linted too) and shellcheck over every script.
+  - `test-core.yml` — `./test-e2e-host.sh tests`.
+  - `test-cross.yml` — `./test-e2e-host.sh cross` (with `mlugg/setup-zig`).
+  - `test-tun.yml` — `./test-e2e-host.sh tun` with `TUN_E2E_REQUIRED=1`, so a
+    missing `/dev/net/tun` fails the job instead of skipping quietly.
+  - `harmonyos-build.yml` — HAP build, debug signing and the ArkTS unit tests
+    on a hosted macOS runner.
+  - `harmonyos-e2e.yml` — the on-device suites, self-hosted (see below).
+
+  The first four gate every push and pull request. Shared setup — the sibling
+  `shadowsocks-rust` checkout (this crate path-depends on it), the Rust
+  toolchain and the cargo cache — lives in the composite action
+  `.github/actions/rust-core`, whose `ref` input is the single place the core's
+  pin is defined; keep it in step with shadowsocks-android's submodule.
+
+  The two HarmonyOS workflows need Huawei's DevEco command-line tools, which
+  are neither publicly downloadable (`docs/hos-emulator-vpn.md` §4) nor
+  redistributable, so `harmonyos-build.yml` streams them from a private S3/R2
+  bucket using the secrets `R2_API_TOKEN` (a Cloudflare API token) and
+  `R2_ENDPOINT`; the S3 keypair is derived from them at runtime by
+  `ci/r2-env.sh` (token ID from `/tokens/verify`, secret = SHA-256 of the token
+  value) and masked. Only the 352-byte manifest is fetched on a normal run: the
+  unpacked toolchain is cached under the archive's sha256 from that manifest,
+  so a re-uploaded bundle invalidates the cache by itself.
   `ci/package-hos-toolchain.sh` builds and uploads that bundle from a Mac that
-  has them installed, taking the same two variables. Secrets are unavailable to fork pull requests, which is
-  why `ci.yml` remains the gate for every PR.
+  has the tools installed, taking the same two variables.
+
+  `harmonyos-e2e.yml` runs `ci/hos-emulator-e2e.sh` on a **self-hosted**
+  Apple-silicon runner labelled `harmonyos`. It cannot be hosted — the Emulator
+  binary and the image are both arm64, so it needs HVF, which GitHub's
+  Apple-silicon runners do not expose (no nested virtualization) and whose
+  Intel runners cannot run an arm64 emulator at all. It is skipped unless the
+  repository variables `HOS_SELF_HOSTED=true`, `HOS_TOOLS_PATH` and
+  `HOS_IMAGES_PATH` are set, so pushes never queue against an offline runner.
+  Secrets are unavailable to fork pull requests, which is why the host-side
+  workflows remain the gate for every PR.
 - **ArkTS unit tests** — `entry/src/test` (hypium): `ss://` URL parsing, both
   SOCKS and tun config serialization (including ACL injection), subscription
   body parsing. Run from DevEco Studio or headless:

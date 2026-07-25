@@ -1,0 +1,31 @@
+name: Core tests
+
+# The Rust suite: unit tests plus tests/e2e.rs and tests/e2e_plugin.rs, which
+# drive sslocal through the same C ABI the NAPI bridge uses and round-trip
+# SOCKS5 through an in-process shadowsocks server.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Unit tests and host e2e tunnels
+    runs-on: ubuntu-latest
+    # Generous for a cold cache: this builds shadowsocks-service from scratch.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-core
+      - run: ./test-e2e-host.sh tests

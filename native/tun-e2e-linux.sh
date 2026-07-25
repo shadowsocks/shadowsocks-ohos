@@ -24,6 +24,7 @@ MESSAGE="hello-through-the-tun-packet-router"
 [[ -x "$HELPER" ]] || { echo "helper binary not found/executable: $HELPER" >&2; exit 1; }
 
 PIDS=()
+# shellcheck disable=SC2329  # invoked by the EXIT trap below
 cleanup() {
     for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
     ip netns pids ssns 2>/dev/null | xargs -r kill 2>/dev/null || true

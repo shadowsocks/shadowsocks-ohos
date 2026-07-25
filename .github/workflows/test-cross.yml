@@ -1,0 +1,37 @@
+name: OpenHarmony cross-compile
+
+# Proves the whole core still compiles for the device target. Cheap insurance
+# against a change that only builds on the host.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: cargo check for aarch64-unknown-linux-ohos
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-core
+        with:
+          targets: aarch64-unknown-linux-ohos
+
+      # C cross-compiler for the check below: the OHOS native SDK is not
+      # publicly downloadable, so native/ohos-cc-wrapper.sh shims the C bits
+      # (blake3) through `zig cc` against the equivalent musl target.
+      - uses: mlugg/setup-zig@v2
+
+      - run: ./test-e2e-host.sh cross

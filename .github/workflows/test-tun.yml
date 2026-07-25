@@ -1,0 +1,35 @@
+name: Tun routing e2e
+
+# The only test that drives real IP packets through the tun stack: a TCP flow
+# into a tun device, asserted to round-trip through the tunnel. Needs Linux,
+# /dev/net/tun and CAP_NET_ADMIN, which a GitHub Linux runner has natively.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tun:
+    name: Tun packet routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-core
+
+      # test-e2e-host.sh skips the tun e2e when the prerequisites are missing.
+      # Here that must be a hard failure instead of a silent pass.
+      - run: ./test-e2e-host.sh tun
+        env:
+          TUN_E2E_REQUIRED: '1'

@@ -1,0 +1,47 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: rustfmt and clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-core
+        with:
+          components: clippy, rustfmt
+
+      - name: rustfmt
+        working-directory: native/sslocal-ffi
+        run: cargo fmt --all -- --check
+
+      # --no-deps: shadowsocks-rust is a path dependency and would otherwise be
+      # linted too, failing on upstream warnings this repo cannot fix.
+      - name: clippy
+        working-directory: native/sslocal-ffi
+        run: cargo clippy --no-deps --all-targets -- -D warnings
+
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # The build, signing, e2e and packaging entry points are all shell.
+      - run: shellcheck test-e2e-host.sh native/*.sh ci/*.sh
