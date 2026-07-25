@@ -1,0 +1,136 @@
+name: HarmonyOS emulator e2e
+
+# Builds the HAPs with the real DevEco toolchain, boots the HarmonyOS emulator
+# and runs the on-device suites against a host-side shadowsocks server.
+#
+# The toolchain and the emulator image are not publicly downloadable (Huawei
+# account + region check, see docs/hos-emulator-vpn.md §4), so this job pulls
+# the bundle ci/package-hos-toolchain.sh uploads to a private R2 bucket. That
+# needs repository secrets, which GitHub does not expose to pull requests from
+# forks — hence push/dispatch only, with the main CI (ci.yml) staying the gate
+# for every PR.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep in step with ci.yml — both build the same shared core.
+  SHADOWSOCKS_RUST_REF: v1.23.4
+  HOS_BUNDLE_PREFIX: harmonyos-6.1.1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  emulator-e2e:
+    name: On-device e2e on the HarmonyOS emulator
+    # Apple silicon: the emulator binary is arm64-only and the image is
+    # phone_all_arm, so the guest needs a native arm64 host with HVF.
+    runs-on: macos-15
+    timeout-minutes: 90
+    # The bucket credentials are the gate: without them there is nothing to run.
+    if: github.repository == 'shadowsocks/shadowsocks-ohos'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the shared Rust core
+        run: |
+          core_dir="$(dirname "$GITHUB_WORKSPACE")/core/src/main/rust"
+          mkdir -p "$core_dir"
+          git clone --depth 1 --branch "$SHADOWSOCKS_RUST_REF" \
+            https://github.com/shadowsocks/shadowsocks-rust.git \
+            "$core_dir/shadowsocks-rust"
+
+      # The runner has ~14 GB free; the toolchain (~6 GB) and the emulator image
+      # (~4.4 GB) do not fit alongside the preinstalled Xcodes and simulator
+      # runtimes. Keep the *selected* Xcode — the Rust build links through it.
+      - name: Free disk space
+        run: |
+          df -h /
+          keep="$(xcode-select -p | sed 's|/Contents/Developer.*||')"
+          echo "keeping $keep"
+          for app in /Applications/Xcode_*.app; do
+            [[ "$app" == "$keep" ]] || sudo rm -rf "$app"
+          done
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches \
+                      /Library/Developer/CoreSimulator/Profiles/Runtimes || true
+          df -h /
+
+      - name: Ensure aws and zstd are present
+        run: |
+          command -v aws  >/dev/null || brew install awscli
+          command -v zstd >/dev/null || brew install zstd
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-ohos
+
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/sslocal-ffi/target
+          key: hos-cargo-${{ runner.os }}-${{ env.SHADOWSOCKS_RUST_REF }}-${{ hashFiles('native/sslocal-ffi/Cargo.lock') }}
+          restore-keys: hos-cargo-${{ runner.os }}-${{ env.SHADOWSOCKS_RUST_REF }}-
+
+      # Streamed straight into place: holding a 4 GB archive *and* its expanded
+      # contents at once would not fit on the runner.
+      - name: Fetch the HarmonyOS toolchain and emulator image
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/hos-tools" "$HOME/hos-images"
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" \
+            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/hos-tools.tar.zst" - \
+            | zstd -dc | tar -C "$HOME/hos-tools" -xf -
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" \
+            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/hos-images.tar.zst" - \
+            | zstd -dc | tar -C "$HOME/hos-images" -xf -
+          # The archive keeps the command-line-tools directory name it was
+          # packed from; hoist it to a fixed path for the steps below.
+          tools="$(find "$HOME/hos-tools" -maxdepth 1 -mindepth 1 -type d | head -1)"
+          echo "HOS_TOOLS=$tools" >> "$GITHUB_ENV"
+          echo "HOS_IMAGES=$HOME/hos-images" >> "$GITHUB_ENV"
+          df -h /
+
+      - name: Build ssserver for the host side of the tunnel
+        run: |
+          core="$(dirname "$GITHUB_WORKSPACE")/core/src/main/rust/shadowsocks-rust"
+          cargo build --release --manifest-path "$core/Cargo.toml" --bin ssserver
+          echo "SSSERVER=$core/target/release/ssserver" >> "$GITHUB_ENV"
+
+      - name: Resolve ohpm dependencies
+        run: $HOS_TOOLS/bin/ohpm install
+
+      # hvigor exits 0 even when specs fail — it only prints "ERROR: Error in
+      # <spec>" — so the failure has to be grepped out of the log.
+      - name: ArkTS unit tests
+        env:
+          DEVECO_SDK_HOME: ${{ env.HOS_TOOLS }}/sdk
+        run: |
+          set -o pipefail
+          $HOS_TOOLS/bin/hvigorw --no-daemon test --mode module \
+            -p module=entry -p product=default 2>&1 | tee unit-tests.log
+          ! grep -q "ERROR: Error in" unit-tests.log
+
+      - name: On-device e2e
+        run: ci/hos-emulator-e2e.sh
+
+      - name: Emulator and device logs
+        if: failure()
+        run: |
+          tail -200 "$HOME/.Huawei/Emulator/deployed/ss_ci/Log/"*.log 2>/dev/null || true

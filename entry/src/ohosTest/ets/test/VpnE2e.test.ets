@@ -17,7 +17,7 @@
  *                                                                             *
  *******************************************************************************/
 
-import { describe, expect, it, Hypium } from '@ohos/hypium';
+import { describe, expect, it } from '@ohos/hypium';
 import { http, vpnExtension } from '@kit.NetworkKit';
 import { Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -75,8 +75,6 @@ const MARKER_BODY = 'shadowsocks-ohos e2e OK';
 export default function vpnE2eTest() {
   describe('VpnE2eTest', () => {
     it('routes an HTTP fetch through the shadowsocks tunnel', 0, async () => {
-      // starting the VPN + fetching + stats sampling exceeds hypium's 5s default
-      Hypium.setTimeConfig(20000);
       await vpnExtension.startVpnExtensionAbility(VPN_ABILITY);
       hilog.info(0x0000, TAG, 'vpn extension started');
       try {

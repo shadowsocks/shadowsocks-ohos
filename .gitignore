@@ -33,3 +33,6 @@ native/.tun-e2e
 *.keystore
 *.csr
 *.cer
+
+# CI toolchain bundle built by ci/package-hos-toolchain.sh
+hos-bundle/

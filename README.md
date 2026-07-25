@@ -91,8 +91,28 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   request — see `.github/workflows/ci.yml`.
 * **ArkTS unit tests** — `entry/src/test` (hypium) covers `ss://` URL parsing
   and both SOCKS and tun config serialization; run from DevEco Studio.
-* **On-device tests** — `entry/src/ohosTest` exercises the NAPI surface
-  (including `startTunFd`) on a HarmonyOS emulator/device from DevEco Studio.
+* **On-device e2e (emulator)** — `ci/hos-emulator-e2e.sh` builds and debug-signs
+  both HAPs, boots the HarmonyOS emulator, installs them and runs
+  `entry/src/ohosTest` against a shadowsocks server on the host:
+
+  ```sh
+  HOS_TOOLS=~/workspace/command-line-tools HOS_IMAGES=~/Library/Huawei/Sdk \
+      ci/hos-emulator-e2e.sh
+  ```
+
+  `SocksE2e.test.ets` is the real end-to-end case: it starts the core in SOCKS
+  mode through the NAPI bridge and fetches a marker page that is only reachable
+  from the far end of the tunnel (a companion spec asserts it is unreachable
+  without it). `SslocalNativeTest` covers the rest of the NAPI surface.
+  `VpnE2e.test.ets` is skipped here — the public emulator image never delivers
+  guest traffic to `vpn-tun`, so it is a real-device test (see
+  `docs/hos-emulator-vpn.md` §2a).
+* **CI** — `ci.yml` runs the host-side suite on every push and pull request.
+  `hos-emulator.yml` runs the emulator e2e above on a macOS runner for pushes to
+  `main` (and on demand); since Huawei's toolchain and emulator image cannot be
+  downloaded by a runner or redistributed, it pulls them from a private bucket
+  populated by `ci/package-hos-toolchain.sh`, using the repository secrets
+  `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
 
 ## Tun mode
 

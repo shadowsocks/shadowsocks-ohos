@@ -54,8 +54,9 @@ entry/                        main (and only) HAP module
                               (incl. SIP003 plugin query), SOCKS and tun config
                               serialization (incl. ACL injection, plugin fields),
                               subscription body parsing
-  src/ohosTest/               on-device tests exercising the NAPI surface
-                              (including startTunFd) on emulator/device
+  src/ohosTest/               on-device tests: NAPI surface (incl. startTunFd),
+                              SOCKS tunnel e2e (emulator-capable, run by CI),
+                              VPN/tun e2e (real devices only)
 native/
   sslocal-ffi/                Rust crate: C ABI over shadowsocks-service
     src/lib.rs                extern "C" API: sslocal_start, sslocal_start_tun_fd,
@@ -84,6 +85,12 @@ native/
   tun-e2e-linux.sh            tun packet-routing e2e (Linux + root)
   run-tun-e2e-docker.sh       runs the tun e2e in a privileged container
                               (works from macOS; needs cargo-zigbuild + Docker)
+ci/
+  hos-emulator-e2e.sh         on-device e2e driver: builds + signs both HAPs,
+                              boots/unlocks the emulator, installs, runs the
+                              ohosTest suites against a host-side ssserver
+  package-hos-toolchain.sh    packs the DevEco tools + emulator image and
+                              uploads them to the private CI bucket
 test-e2e-host.sh              host-side verification entry point (see Testing)
 ```
 
@@ -212,20 +219,40 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   crate path-depends on the shared `shadowsocks-rust` checkout *outside* this
   repository, the workflow clones it to the sibling path
   `../core/src/main/rust/shadowsocks-rust` at the ref in `SHADOWSOCKS_RUST_REF`
-  — keep that in step with shadowsocks-android's submodule pin. The ArkTS
-  tests and the HAP build are **not** in CI: they need the DevEco
-  command-line tools, which are not publicly downloadable (see
-  `docs/hos-emulator-vpn.md` §4); run those locally.
+  — keep that in step with shadowsocks-android's submodule pin.
+  `.github/workflows/hos-emulator.yml` covers the rest — HAP build, debug
+  signing and the on-device suites on a booted emulator — on a macOS runner,
+  for pushes to `main` and on demand. Huawei's DevEco command-line tools and
+  emulator image are neither publicly downloadable (`docs/hos-emulator-vpn.md`
+  §4) nor redistributable, so that job streams them from a private S3/R2
+  bucket (secrets `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`,
+  `R2_SECRET_ACCESS_KEY`); `ci/package-hos-toolchain.sh` builds and uploads
+  that bundle from a Mac that has both installed. Secrets are unavailable to
+  fork pull requests, which is why `ci.yml` remains the gate for every PR.
 - **ArkTS unit tests** — `entry/src/test` (hypium): `ss://` URL parsing, both
   SOCKS and tun config serialization (including ACL injection), subscription
   body parsing. Run from DevEco Studio or headless:
   `hvigorw test --mode module -p module=entry -p product=default`
   (failures show up as `Error in <test name>` lines).
-- **On-device tests** — `entry/src/ohosTest`: exercises the NAPI surface
-  (including `startTunFd`) on a HarmonyOS emulator/device from DevEco Studio,
-  or headless: build the ohosTest HAP (`-p module=entry@ohosTest`), sign and
-  install both HAPs, then
-  `hdc shell aa test -b com.xbt.project -m entry_test -s unittest OpenHarmonyTestRunner`.
+- **On-device tests** — `entry/src/ohosTest`, run from DevEco Studio or
+  headless via **`ci/hos-emulator-e2e.sh`** (`HOS_TOOLS=<command-line-tools>
+  HOS_IMAGES=~/Library/Huawei/Sdk ci/hos-emulator-e2e.sh`), which builds and
+  signs both HAPs, boots + unlocks the emulator, installs, starts a host-side
+  `ssserver` and marker page, and runs the suites. `SKIP_EMULATOR=1` reuses an
+  already-running emulator, `KEEP_EMULATOR=1` leaves it up.
+  - `SslocalNativeTest` — NAPI surface, including `startTunFd` rejection paths.
+  - `SocksE2eTest` — the emulator-capable e2e: the core is started in SOCKS
+    mode and a marker page is fetched *through* the tunnel, addressed as
+    `127.0.0.1:18800` so only the host-side `ssserver` can resolve it; a
+    second spec asserts the guest cannot reach it directly.
+  - `VpnE2eTest` — excluded from CI: the emulator never delivers guest traffic
+    to `vpn-tun` (`docs/hos-emulator-vpn.md` §2a), so it needs real hardware.
+  Writing on-device tests: raise hypium's 5s per-spec timeout with
+  `-s timeout <ms>` on `aa test`, **never** `Hypium.setTimeConfig()` (it sets a
+  system-time provider, and a number there hangs the whole run); never close a
+  `TCPSocket` whose `connect()` is still in flight (it kills the test process
+  silently); a freshly booted image must be unlocked before `aa test` can
+  launch anything.
 
 ## Code style and conventions
 
