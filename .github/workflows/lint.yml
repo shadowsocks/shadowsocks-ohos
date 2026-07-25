@@ -44,4 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The build, signing, e2e and packaging entry points are all shell.
-      - run: shellcheck test-e2e-host.sh native/*.sh ci/*.sh
+      # -S warning: which info-level checks exist varies with the shellcheck
+      # version in the runner image, so an image bump must not turn CI red on
+      # its own.
+      - run: shellcheck -S warning test-e2e-host.sh native/*.sh ci/*.sh

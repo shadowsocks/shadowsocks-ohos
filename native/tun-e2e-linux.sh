@@ -24,7 +24,10 @@ MESSAGE="hello-through-the-tun-packet-router"
 [[ -x "$HELPER" ]] || { echo "helper binary not found/executable: $HELPER" >&2; exit 1; }
 
 PIDS=()
-# shellcheck disable=SC2329  # invoked by the EXIT trap below
+# Invoked by the EXIT trap below, which shellcheck cannot see: older versions
+# call the body unreachable (SC2317), newer ones call the function unused
+# (SC2329).
+# shellcheck disable=SC2317,SC2329
 cleanup() {
     for pid in "${PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
     ip netns pids ssns 2>/dev/null | xargs -r kill 2>/dev/null || true
