@@ -18,7 +18,12 @@ if [[ -n "${R2_API_TOKEN:-}" && -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
         "https://api.cloudflare.com/client/v4/accounts/$_r2_account/tokens/verify" \
         -H "Authorization: Bearer $R2_API_TOKEN" \
         | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["id"])')"
-    AWS_SECRET_ACCESS_KEY="$(printf '%s' "$R2_API_TOKEN" | shasum -a 256 | cut -d' ' -f1)"
+    # sha256sum on Linux, shasum on macOS — this runs on both.
+    if command -v sha256sum >/dev/null; then
+        AWS_SECRET_ACCESS_KEY="$(printf '%s' "$R2_API_TOKEN" | sha256sum | cut -d' ' -f1)"
+    else
+        AWS_SECRET_ACCESS_KEY="$(printf '%s' "$R2_API_TOKEN" | shasum -a 256 | cut -d' ' -f1)"
+    fi
     export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
     unset _r2_account
     # The ID is not secret by itself, but it is half a credential.

@@ -21,14 +21,27 @@
 # Produces (under $OUT, default ./hos-bundle) and uploads to
 # s3://$R2_BUCKET/$PREFIX/:
 #
-#   hos-tools.tar.zst    command-line-tools, minus what a CLI build never uses.
-#                        This is what the `build` job of harmonyos.yml streams.
+#   hos-tools.tar.zst    the **macOS** command-line-tools, minus what a CLI
+#                        build never uses. Used by harmonyos-unit-tests.yml
+#                        (the ArkTS test runner only works on macOS).
 #   hos-images.tar.zst   the emulator system image. CI does not fetch this —
 #                        the emulator only runs on a self-hosted Apple-silicon
 #                        runner, which has the image locally; it is here to
 #                        provision such a machine (or a replacement) without
 #                        going through Huawei's region-gated download again.
-#   manifest.txt         versions and sha256 of both, for the workflow to pin
+#   manifest.txt         versions and sha256 of every archive; the workflows
+#                        key their toolchain cache on the relevant one.
+#
+# The **Linux** toolchain is not built here. Upload Huawei's zip verbatim:
+#
+#   aws s3 cp --endpoint-url "$R2_ENDPOINT" --checksum-algorithm CRC32 \
+#     commandline-tools-linux-x64-<version>.zip \
+#     "s3://$R2_BUCKET/<prefix>/hos-tools-linux-x64.zip"
+#
+# then add its sha256 to manifest.txt as `<sha>  hos-tools-linux-x64.zip`.
+# It must not be repacked on macOS: it holds 19 pairs of paths differing only
+# in case (linux/netfilter headers), which a case-insensitive filesystem
+# silently collapses.
 #
 # Set NO_UPLOAD=1 to only build the archives locally.
 #

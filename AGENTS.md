@@ -225,8 +225,11 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   - `test-cross.yml` — `./test-e2e-host.sh cross` (with `mlugg/setup-zig`).
   - `test-tun.yml` — `./test-e2e-host.sh tun` with `TUN_E2E_REQUIRED=1`, so a
     missing `/dev/net/tun` fails the job instead of skipping quietly.
-  - `harmonyos-build.yml` — HAP build, debug signing and the ArkTS unit tests
-    on a hosted macOS runner.
+  - `harmonyos-build.yml` — HAP build and debug signing, on a hosted **Linux**
+    runner (Huawei ships linux-x64 command-line tools).
+  - `harmonyos-unit-tests.yml` — the ArkTS unit tests, on a hosted **macOS**
+    runner: their runner drives the SDK previewer, which on Linux throws in a
+    container and hangs in a VM, with specs never executing.
   - `harmonyos-e2e.yml` — the on-device suites, self-hosted (see below).
 
   The first four gate every push and pull request. Shared setup — the sibling
@@ -235,17 +238,25 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   `.github/actions/rust-core`, whose `ref` input is the single place the core's
   pin is defined; keep it in step with shadowsocks-android's submodule.
 
-  The two HarmonyOS workflows need Huawei's DevEco command-line tools, which
+  The three HarmonyOS workflows need Huawei's DevEco command-line tools, which
   are neither publicly downloadable (`docs/hos-emulator-vpn.md` §4) nor
-  redistributable, so `harmonyos-build.yml` streams them from a private S3/R2
-  bucket using the secrets `R2_API_TOKEN` (a Cloudflare API token) and
-  `R2_ENDPOINT`; the S3 keypair is derived from them at runtime by
-  `ci/r2-env.sh` (token ID from `/tokens/verify`, secret = SHA-256 of the token
-  value) and masked. Only the 352-byte manifest is fetched on a normal run: the
-  unpacked toolchain is cached under the archive's sha256 from that manifest,
-  so a re-uploaded bundle invalidates the cache by itself.
-  `ci/package-hos-toolchain.sh` builds and uploads that bundle from a Mac that
-  has the tools installed, taking the same two variables.
+  redistributable, so they stream them from a private S3/R2 bucket using the
+  secrets `R2_API_TOKEN` (a Cloudflare API token) and `R2_ENDPOINT`; the S3
+  keypair is derived from them at runtime by `ci/r2-env.sh` (token ID from
+  `/tokens/verify`, secret = SHA-256 of the token value) and masked. Two
+  toolchains live there: `hos-tools-linux-x64.zip` (Huawei's Linux zip,
+  verbatim — it holds 19 paths differing only in case, so repacking it on a
+  case-insensitive filesystem drops files) for the build job, and
+  `hos-tools.tar.zst` (macOS) for the unit tests. Only the 352-byte manifest is
+  fetched on a normal run: the unpacked toolchain is cached under that
+  archive's sha256 from the manifest, so a re-upload invalidates the cache by
+  itself. `ci/package-hos-toolchain.sh` builds and uploads the macOS bundle and
+  the emulator image; the Linux zip is uploaded as-is.
+
+  Linux quirks the build job handles: `restool`'s
+  `libimage_transcoder_shared.so` links against libGL, so `libgl1` is installed
+  before `@CompileResource` runs; signing needs a JDK, which the runner image
+  ships.
 
   `harmonyos-e2e.yml` runs `ci/hos-emulator-e2e.sh` on a **self-hosted**
   Apple-silicon runner labelled `harmonyos`. It cannot be hosted — the Emulator

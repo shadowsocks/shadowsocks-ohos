@@ -1,7 +1,9 @@
 name: HarmonyOS build
 
-# The HAP build, debug signing and the ArkTS unit tests — everything that needs
-# the HarmonyOS SDK but no running device.
+# The HAP build and debug signing — what needs the HarmonyOS SDK but neither a
+# device nor a GUI. The ArkTS unit tests are *not* here: their runner drives the
+# previewer, a GUI component that does not work on Linux (the specs silently do
+# not execute), so they live in harmonyos-unit-tests.yml on macOS.
 #
 # Huawei's DevEco command-line tools are behind an account + region gate
 # (docs/hos-emulator-vpn.md §4) and cannot be redistributed, so they are
@@ -33,7 +35,7 @@ env:
 jobs:
   build:
     name: HAP build, signing and ArkTS unit tests
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     if: github.repository == 'shadowsocks/shadowsocks-ohos'
     steps:
@@ -41,24 +43,6 @@ jobs:
       - uses: ./.github/actions/rust-core
         with:
           targets: aarch64-unknown-linux-ohos
-
-      # ~14 GB free on the runner; the toolchain alone is ~6 GB unpacked. Keep
-      # the *selected* Xcode — the Rust build links through it.
-      - name: Free disk space
-        run: |
-          df -h /
-          keep="$(xcode-select -p | sed 's|/Contents/Developer.*||')"
-          for app in /Applications/Xcode_*.app; do
-            [[ "$app" == "$keep" ]] || sudo rm -rf "$app"
-          done
-          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches \
-                      /Library/Developer/CoreSimulator/Profiles/Runtimes || true
-          df -h /
-
-      - name: Ensure aws and zstd are present
-        run: |
-          command -v aws  >/dev/null || brew install awscli
-          command -v zstd >/dev/null || brew install zstd
 
       # 352 bytes, so this runs even on a cache hit: the archive's sha256 from
       # the manifest is the cache key, which means re-uploading a bundle
@@ -72,7 +56,7 @@ jobs:
           source ci/r2-env.sh
           sha="$(aws s3 cp --endpoint-url "$R2_ENDPOINT" \
             "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/manifest.txt" - \
-            | awk '/hos-tools\.tar\.zst/ { print $1 }')"
+            | awk '/hos-tools-linux-x64\.zip/ { print $1 }')"
           [[ -n "$sha" ]] || { echo "no hos-tools checksum in the manifest"; exit 1; }
           echo "HOS_TOOLS_SHA=$sha" >> "$GITHUB_ENV"
 
@@ -83,9 +67,12 @@ jobs:
           path: ~/hos-tools
           key: hos-tools-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}
 
-      # Streamed straight into place: holding the archive *and* its expanded
-      # contents at once would not fit. Only the tools are fetched — the 2 GB
-      # emulator image is for the self-hosted e2e runner, which has it locally.
+      # Huawei's zip verbatim, because it holds 19 pairs of paths that differ
+      # only in case (linux/netfilter headers) — repacking it on a
+      # case-insensitive filesystem silently drops files. It cannot be streamed
+      # either: unzip needs to seek, so it lands on disk and is deleted after.
+      # Only the tools are fetched; the emulator image belongs to the
+      # self-hosted e2e runner, which has it locally.
       - name: Fetch the HarmonyOS toolchain
         if: steps.tools-cache.outputs.cache-hit != 'true'
         env:
@@ -96,8 +83,10 @@ jobs:
           source ci/r2-env.sh
           mkdir -p "$HOME/hos-tools"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" \
-            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/hos-tools.tar.zst" - \
-            | zstd -dc | tar -C "$HOME/hos-tools" -xf -
+            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/hos-tools-linux-x64.zip" \
+            /tmp/hos-tools.zip
+          unzip -q /tmp/hos-tools.zip -d "$HOME/hos-tools"
+          rm -f /tmp/hos-tools.zip
 
       - name: Locate the toolchain
         run: |
@@ -126,6 +115,11 @@ jobs:
           key: hos-deps-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}-${{ hashFiles('oh-package-lock.json5', 'oh-package.json5', 'entry/oh-package.json5') }}
           restore-keys: hos-deps-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}-
 
+      # restool's libimage_transcoder_shared.so links against libGL, which the
+      # runner image does not ship — @CompileResource dies without it.
+      - name: Install the resource compiler's dependency
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libgl1
+
       - name: Resolve ohpm dependencies
         run: |
           "$HOS_TOOLS/bin/ohpm" install
@@ -142,15 +136,6 @@ jobs:
             -p module=entry@ohosTest -p product=default -p buildMode=debug
           native/sign-hap-debug.sh entry/build/default/outputs/default/entry-default-unsigned.hap
           native/sign-hap-debug.sh entry/build/default/outputs/ohosTest/entry-ohosTest-unsigned.hap
-
-      # hvigor exits 0 even when specs fail — it only prints "ERROR: Error in
-      # <spec>" — so the failure has to be grepped out of the log.
-      - name: ArkTS unit tests
-        run: |
-          set -o pipefail
-          "$HOS_TOOLS/bin/hvigorw" --no-daemon test --mode module \
-            -p module=entry -p product=default 2>&1 | tee unit-tests.log
-          ! grep -q "ERROR: Error in" unit-tests.log
 
       - name: Upload the signed HAPs
         uses: actions/upload-artifact@v4

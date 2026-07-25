@@ -5,6 +5,7 @@
 [![Cross-compile](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-cross.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-cross.yml)
 [![Tun e2e](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-tun.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-tun.yml)
 [![HarmonyOS build](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-build.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-build.yml)
+[![ArkTS unit tests](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-unit-tests.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-unit-tests.yml)
 
 A native HarmonyOS NEXT (ArkTS/ArkUI, Stage model) client, sharing the Rust
 core (`shadowsocks-rust`) with the Android app through a C ABI + NAPI bridge.
@@ -97,7 +98,10 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   broke: `test-core.yml`, `test-cross.yml`, `test-tun.yml`, plus `lint.yml` for
   rustfmt/clippy/shellcheck. All four gate every pull request.
 * **ArkTS unit tests** — `entry/src/test` (hypium) covers `ss://` URL parsing
-  and both SOCKS and tun config serialization; run from DevEco Studio.
+  and both SOCKS and tun config serialization. Run from DevEco Studio, or
+  headless with `hvigorw test --mode module -p module=entry -p product=default`
+  — **on macOS or Windows**: the runner drives the SDK's previewer, which does
+  not work on Linux.
 * **On-device e2e (emulator)** — `ci/hos-emulator-e2e.sh` builds and debug-signs
   both HAPs, boots the HarmonyOS emulator, installs them and runs
   `entry/src/ohosTest` against a shadowsocks server on the host:
@@ -122,10 +126,11 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   | `test-core.yml` | Rust unit tests + host e2e tunnels | hosted Linux |
   | `test-cross.yml` | `aarch64-unknown-linux-ohos` build check | hosted Linux |
   | `test-tun.yml` | tun packet-routing e2e | hosted Linux |
-  | `harmonyos-build.yml` | HAP build, signing, ArkTS unit tests | hosted macOS |
+  | `harmonyos-build.yml` | HAP build and debug signing | hosted Linux |
+  | `harmonyos-unit-tests.yml` | ArkTS unit tests | hosted macOS |
   | `harmonyos-e2e.yml` | on-device suites on the emulator | self-hosted macOS |
 
-  The first four gate every pull request. The HarmonyOS pair needs the DevEco
+  The first four gate every pull request. The HarmonyOS trio needs the DevEco
   toolchain, which cannot be downloaded by a runner or redistributed, so it is
   streamed from a private bucket populated by `ci/package-hos-toolchain.sh` and
   authenticated with the repository secrets `R2_API_TOKEN` (a Cloudflare API
@@ -133,15 +138,25 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   SHA-256 of its value, which `ci/r2-env.sh` derives at runtime. The unpacked
   toolchain is cached between runs, keyed on the archive's checksum from the
   bundle manifest, so re-uploading a bundle invalidates it on its own. Since
-  secrets are not exposed to fork pull requests, those two run on pushes to
+  secrets are not exposed to fork pull requests, those three run on pushes to
   `main` and on demand.
 
-  `harmonyos-e2e.yml` cannot be hosted: the emulator is an arm64-only binary
-  running an arm64 guest, so it needs HVF, and GitHub's Apple-silicon runners
-  have no nested virtualization while their Intel runners cannot execute it at
-  all. It is skipped unless the repository variables `HOS_SELF_HOSTED`,
-  `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are set, so pushes are never left
-  queued against an offline runner.
+  Huawei ships the command-line tools for Linux x64 as well, so the HAP build
+  runs on a Linux runner — more free disk, no Xcode eviction, faster start. Two
+  things keep the Mac in the picture:
+
+  * The **ArkTS unit tests** cannot run on Linux. The task that emits the
+    results is what actually executes the specs, by driving the SDK's previewer
+    (a GUI component); on Linux it either throws or hangs, and a deliberately
+    failing spec produces no output at all. So `harmonyos-unit-tests.yml` uses
+    the macOS bundle.
+  * The **emulator** is macOS/Windows-only, and its binary and guest are both
+    arm64, so it needs HVF — which GitHub's Apple-silicon runners do not expose
+    (no nested virtualization) and whose Intel runners cannot use for an arm64
+    guest. `harmonyos-e2e.yml` therefore targets a self-hosted Apple-silicon
+    runner, and is skipped unless the repository variables `HOS_SELF_HOSTED`,
+    `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are set, so pushes are never left
+    queued against an offline runner.
 
   Common setup — the shared `shadowsocks-rust` checkout, the toolchain and the
   cargo cache — lives in the composite action `.github/actions/rust-core`,
