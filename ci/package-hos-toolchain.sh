@@ -17,8 +17,13 @@
 # Produces (under $OUT, default ./hos-bundle) and uploads to
 # s3://$R2_BUCKET/$PREFIX/:
 #
-#   hos-tools.tar.zst    command-line-tools, minus what a CLI build never uses
-#   hos-images.tar.zst   the emulator system image
+#   hos-tools.tar.zst    command-line-tools, minus what a CLI build never uses.
+#                        This is what the `build` job of harmonyos.yml streams.
+#   hos-images.tar.zst   the emulator system image. CI does not fetch this —
+#                        the emulator only runs on a self-hosted Apple-silicon
+#                        runner, which has the image locally; it is here to
+#                        provision such a machine (or a replacement) without
+#                        going through Huawei's region-gated download again.
 #   manifest.txt         versions and sha256 of both, for the workflow to pin
 #
 # Set NO_UPLOAD=1 to only build the archives locally.

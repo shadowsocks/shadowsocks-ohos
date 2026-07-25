@@ -220,15 +220,22 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   repository, the workflow clones it to the sibling path
   `../core/src/main/rust/shadowsocks-rust` at the ref in `SHADOWSOCKS_RUST_REF`
   — keep that in step with shadowsocks-android's submodule pin.
-  `.github/workflows/hos-emulator.yml` covers the rest — HAP build, debug
-  signing and the on-device suites on a booted emulator — on a macOS runner,
-  for pushes to `main` and on demand. Huawei's DevEco command-line tools and
-  emulator image are neither publicly downloadable (`docs/hos-emulator-vpn.md`
-  §4) nor redistributable, so that job streams them from a private S3/R2
-  bucket (secrets `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`,
-  `R2_SECRET_ACCESS_KEY`); `ci/package-hos-toolchain.sh` builds and uploads
-  that bundle from a Mac that has both installed. Secrets are unavailable to
-  fork pull requests, which is why `ci.yml` remains the gate for every PR.
+  `.github/workflows/harmonyos.yml` covers the rest, for pushes to `main` and
+  on demand, in two jobs: `build` (HAP build, debug signing, ArkTS unit tests)
+  on a GitHub-hosted macOS runner, and `emulator-e2e` (the on-device suites on
+  a booted emulator) on a **self-hosted** Apple-silicon runner labelled
+  `harmonyos`. The e2e cannot be hosted — the Emulator binary and the image are
+  both arm64, so it needs HVF, which GitHub's Apple-silicon runners do not
+  expose (no nested virtualization) and whose Intel runners cannot run an arm64
+  emulator at all. That job is skipped unless the repository variables
+  `HOS_SELF_HOSTED=true`, `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are set, so
+  pushes never queue against an offline runner. Huawei's DevEco command-line
+  tools are neither publicly downloadable (`docs/hos-emulator-vpn.md` §4) nor
+  redistributable, so `build` streams them from a private S3/R2 bucket (secrets
+  `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`);
+  `ci/package-hos-toolchain.sh` builds and uploads that bundle from a Mac that
+  has them installed. Secrets are unavailable to fork pull requests, which is
+  why `ci.yml` remains the gate for every PR.
 - **ArkTS unit tests** — `entry/src/test` (hypium): `ss://` URL parsing, both
   SOCKS and tun config serialization (including ACL injection), subscription
   body parsing. Run from DevEco Studio or headless:

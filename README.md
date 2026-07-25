@@ -108,11 +108,20 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   guest traffic to `vpn-tun`, so it is a real-device test (see
   `docs/hos-emulator-vpn.md` §2a).
 * **CI** — `ci.yml` runs the host-side suite on every push and pull request.
-  `hos-emulator.yml` runs the emulator e2e above on a macOS runner for pushes to
-  `main` (and on demand); since Huawei's toolchain and emulator image cannot be
-  downloaded by a runner or redistributed, it pulls them from a private bucket
-  populated by `ci/package-hos-toolchain.sh`, using the repository secrets
-  `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`.
+  `harmonyos.yml` adds the parts that need the SDK, on pushes to `main` and on
+  demand. Because Huawei's toolchain cannot be downloaded by a runner or
+  redistributed, it is streamed from a private bucket populated by
+  `ci/package-hos-toolchain.sh` (repository secrets `R2_ENDPOINT`, `R2_BUCKET`,
+  `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`). Two jobs:
+  * `build` — HAP build, debug signing and the ArkTS unit tests, on a
+    GitHub-hosted macOS runner.
+  * `emulator-e2e` — the on-device suites, on a **self-hosted** Apple-silicon
+    runner labelled `harmonyos`. It cannot be hosted: the emulator is an
+    arm64-only binary running an arm64 guest, so it needs HVF, and GitHub's
+    Apple-silicon runners have no nested virtualization while their Intel
+    runners cannot execute it at all. The job is skipped unless the repository
+    variables `HOS_SELF_HOSTED`, `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are
+    set, so pushes are never left queued against an offline runner.
 
 ## Tun mode
 
