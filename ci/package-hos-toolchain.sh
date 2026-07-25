@@ -87,20 +87,9 @@ fi
 : "${R2_ENDPOINT:?set R2_ENDPOINT}"
 command -v aws >/dev/null || { echo "aws CLI required (brew install awscli)"; exit 1; }
 
-# Same credential model as the workflow: R2's S3 API accepts a Cloudflare API
-# token as the token's *ID* (from /tokens/verify) plus the SHA-256 of its value,
-# so only R2_API_TOKEN has to be stored anywhere. An explicit AWS keypair still
-# wins if one is exported.
-if [[ -n "${R2_API_TOKEN:-}" && -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
-    account="$(echo "$R2_ENDPOINT" | sed -E 's|https?://([^.]+)\..*|\1|')"
-    AWS_ACCESS_KEY_ID="$(curl -fsS \
-        "https://api.cloudflare.com/client/v4/accounts/$account/tokens/verify" \
-        -H "Authorization: Bearer $R2_API_TOKEN" \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["id"])')"
-    AWS_SECRET_ACCESS_KEY="$(printf '%s' "$R2_API_TOKEN" | shasum -a 256 | cut -d' ' -f1)"
-    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-    export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
-fi
+# Same credential derivation the workflow uses.
+# shellcheck source=ci/r2-env.sh
+source "$(dirname "$0")/r2-env.sh"
 
 echo "=== uploading to s3://$R2_BUCKET/$PREFIX/ ==="
 for file in hos-tools.tar.zst hos-images.tar.zst manifest.txt; do

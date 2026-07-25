@@ -113,8 +113,10 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   redistributed, it is streamed from a private bucket populated by
   `ci/package-hos-toolchain.sh`, authenticated with the repository secrets
   `R2_API_TOKEN` (a Cloudflare API token) and `R2_ENDPOINT` — R2's S3 API takes
-  that token as its ID plus the SHA-256 of its value, which the workflow derives
-  at runtime. Two jobs:
+  that token as its ID plus the SHA-256 of its value, which `ci/r2-env.sh`
+  derives at runtime. The unpacked toolchain is cached between runs, keyed on
+  the archive's checksum from the bundle manifest, so re-uploading a bundle
+  invalidates it on its own and nothing has to be bumped by hand. Two jobs:
   * `build` — HAP build, debug signing and the ArkTS unit tests, on a
     GitHub-hosted macOS runner.
   * `emulator-e2e` — the on-device suites, on a **self-hosted** Apple-silicon

@@ -91,6 +91,8 @@ ci/
                               ohosTest suites against a host-side ssserver
   package-hos-toolchain.sh    packs the DevEco tools + emulator image and
                               uploads them to the private CI bucket
+  r2-env.sh                   sourced helper: derives S3 credentials for that
+                              bucket from R2_API_TOKEN + R2_ENDPOINT
 test-e2e-host.sh              host-side verification entry point (see Testing)
 ```
 
@@ -233,8 +235,11 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   tools are neither publicly downloadable (`docs/hos-emulator-vpn.md` §4) nor
   redistributable, so `build` streams them from a private S3/R2 bucket, using
   the secrets `R2_API_TOKEN` (a Cloudflare API token) and `R2_ENDPOINT`; the S3
-  keypair is derived from them at runtime (token ID from `/tokens/verify`,
-  secret = SHA-256 of the token value) and masked.
+  keypair is derived from them at runtime by `ci/r2-env.sh` (token ID from
+  `/tokens/verify`, secret = SHA-256 of the token value) and masked. Only the
+  352-byte manifest is fetched on a normal run: the unpacked toolchain is
+  cached under the archive's sha256 from that manifest, so a re-uploaded bundle
+  invalidates the cache by itself.
   `ci/package-hos-toolchain.sh` builds and uploads that bundle from a Mac that
   has them installed, taking the same two variables. Secrets are unavailable to fork pull requests, which is
   why `ci.yml` remains the gate for every PR.
