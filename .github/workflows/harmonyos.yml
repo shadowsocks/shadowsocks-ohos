@@ -3,9 +3,10 @@ name: HarmonyOS build and on-device e2e
 # The HarmonyOS side of the project needs Huawei's DevEco command-line tools,
 # which are behind an account + region gate (docs/hos-emulator-vpn.md §4) and
 # cannot be redistributed — so the build job takes them from a private S3/R2
-# bucket populated by ci/package-hos-toolchain.sh. Repository secrets are not
-# exposed to pull requests from forks, which is why ci.yml (host-side Rust, no
-# SDK needed) stays the gate for every PR.
+# bucket populated by ci/package-hos-toolchain.sh, authenticating with the
+# repository secrets R2_API_TOKEN (a Cloudflare API token) and R2_ENDPOINT.
+# Secrets are not exposed to pull requests from forks, which is why ci.yml
+# (host-side Rust, no SDK needed) stays the gate for every PR.
 #
 # Two jobs, because they need different machines:
 #
@@ -48,6 +49,9 @@ concurrency:
 env:
   # Keep in step with ci.yml — both build the same shared core.
   SHADOWSOCKS_RUST_REF: v1.23.4
+  # Where ci/package-hos-toolchain.sh put the bundle. The account lives in the
+  # R2_ENDPOINT secret, so a bucket name on its own gives nothing away.
+  R2_BUCKET: shadowsocks
   HOS_BUNDLE_PREFIX: harmonyos-6.1.1
   CARGO_TERM_COLOR: always
 
@@ -105,15 +109,28 @@ jobs:
       # Streamed straight into place: holding the archive *and* its expanded
       # contents at once would not fit. Only the tools are fetched — the 2 GB
       # emulator image is for the self-hosted job, which has it locally.
+      #
+      # R2's S3 API takes a Cloudflare API token as the token's *ID* plus the
+      # SHA-256 of its value, so the keypair is derived here and only the token
+      # itself is stored. Both derived halves are masked: the ID is not secret
+      # by itself, but it is half a credential.
       - name: Fetch the HarmonyOS toolchain
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
+          R2_API_TOKEN: ${{ secrets.R2_API_TOKEN }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
+          account="$(echo "$R2_ENDPOINT" | sed -E 's|https?://([^.]+)\..*|\1|')"
+          key_id="$(curl -fsS \
+            "https://api.cloudflare.com/client/v4/accounts/$account/tokens/verify" \
+            -H "Authorization: Bearer $R2_API_TOKEN" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["id"])')"
+          secret="$(printf '%s' "$R2_API_TOKEN" | shasum -a 256 | cut -d' ' -f1)"
+          echo "::add-mask::$key_id"
+          echo "::add-mask::$secret"
+          export AWS_ACCESS_KEY_ID="$key_id"
+          export AWS_SECRET_ACCESS_KEY="$secret"
+          export AWS_DEFAULT_REGION=auto
           mkdir -p "$HOME/hos-tools"
           aws s3 cp --endpoint-url "$R2_ENDPOINT" \
             "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/hos-tools.tar.zst" - \

@@ -111,8 +111,10 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   `harmonyos.yml` adds the parts that need the SDK, on pushes to `main` and on
   demand. Because Huawei's toolchain cannot be downloaded by a runner or
   redistributed, it is streamed from a private bucket populated by
-  `ci/package-hos-toolchain.sh` (repository secrets `R2_ENDPOINT`, `R2_BUCKET`,
-  `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`). Two jobs:
+  `ci/package-hos-toolchain.sh`, authenticated with the repository secrets
+  `R2_API_TOKEN` (a Cloudflare API token) and `R2_ENDPOINT` — R2's S3 API takes
+  that token as its ID plus the SHA-256 of its value, which the workflow derives
+  at runtime. Two jobs:
   * `build` — HAP build, debug signing and the ArkTS unit tests, on a
     GitHub-hosted macOS runner.
   * `emulator-e2e` — the on-device suites, on a **self-hosted** Apple-silicon

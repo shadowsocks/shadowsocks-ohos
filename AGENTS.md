@@ -231,10 +231,12 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   `HOS_SELF_HOSTED=true`, `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are set, so
   pushes never queue against an offline runner. Huawei's DevEco command-line
   tools are neither publicly downloadable (`docs/hos-emulator-vpn.md` §4) nor
-  redistributable, so `build` streams them from a private S3/R2 bucket (secrets
-  `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`);
+  redistributable, so `build` streams them from a private S3/R2 bucket, using
+  the secrets `R2_API_TOKEN` (a Cloudflare API token) and `R2_ENDPOINT`; the S3
+  keypair is derived from them at runtime (token ID from `/tokens/verify`,
+  secret = SHA-256 of the token value) and masked.
   `ci/package-hos-toolchain.sh` builds and uploads that bundle from a Mac that
-  has them installed. Secrets are unavailable to fork pull requests, which is
+  has them installed, taking the same two variables. Secrets are unavailable to fork pull requests, which is
   why `ci.yml` remains the gate for every PR.
 - **ArkTS unit tests** — `entry/src/test` (hypium): `ss://` URL parsing, both
   SOCKS and tun config serialization (including ACL injection), subscription
