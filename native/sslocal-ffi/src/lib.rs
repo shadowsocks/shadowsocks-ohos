@@ -54,6 +54,11 @@ struct Instance {
 
 static INSTANCE: Mutex<Option<Instance>> = Mutex::new(None);
 static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
+/// The message most recently handed out by [`sslocal_last_error`]. Keeping it
+/// alive here is what makes the returned pointer safe to read after the lock
+/// is released: `LAST_ERROR` itself may be overwritten (and its buffer freed)
+/// at any moment by another thread — the core's own tasks record errors too.
+static LAST_ERROR_HANDED_OUT: Mutex<Option<CString>> = Mutex::new(None);
 #[cfg(feature = "local-flow-stat")]
 static STAT_ADDR: Mutex<Option<SocketAddr>> = Mutex::new(None);
 
@@ -62,16 +67,22 @@ fn set_last_error(message: String) {
     *LAST_ERROR.lock().unwrap() = Some(cstring);
 }
 
-fn parse_config_json(config_json: *const c_char) -> Result<serde_json::Value, c_int> {
-    if config_json.is_null() {
-        set_last_error("config_json is null".to_owned());
+/// Borrows a C string argument as `&str`. Kept as a helper (rather than
+/// dereferencing the pointer in the `extern "C"` bodies) so every entry point
+/// validates a null pointer and non-UTF-8 input the same way.
+fn cstr_arg<'a>(ptr: *const c_char, what: &str) -> Result<&'a str, c_int> {
+    if ptr.is_null() {
+        set_last_error(format!("{what} is null"));
         return Err(SSLOCAL_ERR_INVALID_ARG);
     }
-    let raw = unsafe { CStr::from_ptr(config_json) };
-    let text = raw.to_str().map_err(|e| {
-        set_last_error(format!("config_json is not valid UTF-8: {e}"));
+    unsafe { CStr::from_ptr(ptr) }.to_str().map_err(|e| {
+        set_last_error(format!("{what} is not valid UTF-8: {e}"));
         SSLOCAL_ERR_INVALID_ARG
-    })?;
+    })
+}
+
+fn parse_config_json(config_json: *const c_char) -> Result<serde_json::Value, c_int> {
+    let text = cstr_arg(config_json, "config_json")?;
     serde_json::from_str(text).map_err(|e| {
         set_last_error(format!("invalid sslocal config: {e}"));
         SSLOCAL_ERR_BAD_CONFIG
@@ -308,9 +319,24 @@ pub extern "C" fn sslocal_start_tun_fd(config_json: *const c_char, tun_fd: c_int
                 });
             match index {
                 Some(i) => {
+                    // Hand the core its own descriptor. The tun device closes
+                    // the fd it was given when the runtime is torn down, and
+                    // the caller (HarmonyOS `VpnConnection.destroy()`) closes
+                    // the one it owns; without the dup both close the same
+                    // number, and since `sslocal_stop` tears the runtime down
+                    // in the background the later close can land on an
+                    // unrelated descriptor the process opened meanwhile.
+                    let owned_fd = unsafe { libc::dup(tun_fd) };
+                    if owned_fd < 0 {
+                        set_last_error(format!(
+                            "failed to duplicate tun file descriptor {tun_fd}: {}",
+                            std::io::Error::last_os_error()
+                        ));
+                        return Err(SSLOCAL_ERR_INVALID_ARG);
+                    }
                     let instance = &mut config.local[i];
                     instance.config.protocol = ProtocolType::Tun;
-                    instance.config.tun_device_fd = Some(tun_fd);
+                    instance.config.tun_device_fd = Some(owned_fd);
                     // The tun crate can only query the interface address (needed by
                     // the routing loop) when it knows the interface name. A wrapped
                     // fd carries no name, so recover it from the fd and inject it.
@@ -349,6 +375,10 @@ fn recover_tun_name(fd: c_int) -> Option<String> {
     if rc < 0 {
         return None;
     }
+    // `c_char` is signed on x86_64 but unsigned on aarch64, so this cast is
+    // required on one and a no-op on the other — which is why clippy's
+    // unnecessary_cast has to be silenced rather than the cast removed.
+    #[allow(clippy::unnecessary_cast)]
     let name: Vec<u8> = ifr
         .ifr_name
         .iter()
@@ -376,12 +406,9 @@ pub extern "C" fn sslocal_set_stat_address(addr: *const c_char) -> c_int {
             *STAT_ADDR.lock().unwrap() = None;
             return SSLOCAL_OK;
         }
-        let text = match unsafe { CStr::from_ptr(addr) }.to_str() {
+        let text = match cstr_arg(addr, "stat address") {
             Ok(text) => text,
-            Err(e) => {
-                set_last_error(format!("stat address is not valid UTF-8: {e}"));
-                return SSLOCAL_ERR_INVALID_ARG;
-            }
+            Err(code) => return code,
         };
         if text.is_empty() {
             *STAT_ADDR.lock().unwrap() = None;
@@ -429,11 +456,19 @@ pub extern "C" fn sslocal_is_running() -> c_int {
     INSTANCE.lock().unwrap().is_some() as c_int
 }
 
-/// Returns the last error message, or null if none occurred. The pointer is
-/// valid until the next FFI call that records an error.
+/// Returns the last error message, or null if none occurred. The pointer stays
+/// valid until the next `sslocal_last_error` call.
+///
+/// The message is moved into a slot of its own before the pointer is returned:
+/// errors are recorded from other threads (the core's own tasks call
+/// `set_last_error` too), so handing out a pointer into `LAST_ERROR` would let
+/// a concurrent error free the buffer while the caller is still reading it.
 #[no_mangle]
 pub extern "C" fn sslocal_last_error() -> *const c_char {
-    match &*LAST_ERROR.lock().unwrap() {
+    let message = LAST_ERROR.lock().unwrap().clone();
+    let mut handed_out = LAST_ERROR_HANDED_OUT.lock().unwrap();
+    *handed_out = message;
+    match &*handed_out {
         Some(message) => message.as_ptr(),
         None => std::ptr::null(),
     }
@@ -449,6 +484,18 @@ pub extern "C" fn sslocal_version() -> *const c_char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `INSTANCE`, `LAST_ERROR` and `STAT_ADDR` are process-wide, so every
+    /// test that touches them has to take this lock — cargo runs the tests of
+    /// one binary in parallel threads, and they would otherwise clobber each
+    /// other's state.
+    static GLOBAL_STATE: Mutex<()> = Mutex::new(());
+
+    /// Takes the global-state lock, ignoring poisoning from an unrelated
+    /// failing test (the state is overwritten by each test anyway).
+    fn lock_global_state() -> std::sync::MutexGuard<'static, ()> {
+        GLOBAL_STATE.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
     fn version_is_not_null() {
@@ -481,9 +528,23 @@ mod tests {
         assert_eq!(sslocal_stop(), SSLOCAL_ERR_NOT_RUNNING);
     }
 
+    #[test]
+    fn last_error_pointer_outlives_a_concurrent_error() {
+        let _guard = lock_global_state();
+        set_last_error("the first error".to_owned());
+        let handed_out = sslocal_last_error();
+        assert!(!handed_out.is_null());
+        // The core records errors from its own threads; that must not free the
+        // buffer the caller is still holding.
+        set_last_error("a second, much longer error message from another thread".to_owned());
+        let text = unsafe { CStr::from_ptr(handed_out) }.to_str().unwrap();
+        assert_eq!(text, "the first error");
+    }
+
     #[cfg(feature = "local-flow-stat")]
     #[test]
     fn set_stat_address_parses_and_clears() {
+        let _guard = lock_global_state();
         // garbage is rejected (and leaves the stored address untouched)
         let garbage = CString::new("not an address").unwrap();
         assert_eq!(

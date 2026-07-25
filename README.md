@@ -1,5 +1,7 @@
 # Shadowsocks for HarmonyOS NEXT
 
+[![CI](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/ci.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/ci.yml)
+
 A native HarmonyOS NEXT (ArkTS/ArkUI, Stage model) client, sharing the Rust
 core (`shadowsocks-rust`) with the Android app through a C ABI + NAPI bridge.
 
@@ -80,11 +82,13 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   2. Cross-compile check that the whole core builds for
      `aarch64-unknown-linux-ohos` (real SDK clang if present, else a zig cc
      shim for the C bits).
-  3. **Tun packet-routing e2e** (Linux + root): sends a real TCP flow into a
-     tun device and asserts it round-trips through the tunnel. On non-Linux
-     hosts run it in a privileged container with
-     `native/run-tun-e2e-docker.sh`. All three also run in CI
-     (`.github/workflows/harmony.yml`).
+  3. **Tun packet-routing e2e** (Linux, `/dev/net/tun`, root or passwordless
+     sudo): sends a real TCP flow into a tun device and asserts it round-trips
+     through the tunnel. On non-Linux hosts run it in a privileged container
+     with `native/run-tun-e2e-docker.sh`.
+
+  All three steps, plus rustfmt and clippy, run in CI on every push and pull
+  request — see `.github/workflows/ci.yml`.
 * **ArkTS unit tests** — `entry/src/test` (hypium) covers `ss://` URL parsing
   and both SOCKS and tun config serialization; run from DevEco Studio.
 * **On-device tests** — `entry/src/ohosTest` exercises the NAPI surface
@@ -112,4 +116,7 @@ packet-routing e2e above.
   models the bypass by running the server in a separate network namespace.
 * Third-party VPN apps on HarmonyOS NEXT require Huawei's approval for the
   VPN extension capability before store distribution.
-* Plugin support (v2ray-plugin etc.) is not ported.
+* SIP003 plugins run **in-process** (external plugin binaries cannot be
+  spawned on HarmonyOS): `obfs-local`/`simple-obfs` (http/tls) and
+  `v2ray-plugin` (websocket, optional TLS) are built into the core; any other
+  plugin name is rejected, and UDP does not pass through a plugin.

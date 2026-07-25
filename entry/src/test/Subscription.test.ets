@@ -1,5 +1,9 @@
 import { describe, expect, it } from '@ohos/hypium';
-import { parseSubscriptionBody } from '../main/ets/model/Subscription';
+import {
+  parseSubscriptionBody,
+  Subscription,
+  SubscriptionStore,
+} from '../main/ets/model/Subscription';
 
 export default function subscriptionTest() {
   describe('SubscriptionTest', () => {
@@ -36,6 +40,32 @@ export default function subscriptionTest() {
       expect(parseSubscriptionBody('', 's').length).assertEqual(0);
       expect(parseSubscriptionBody('not a subscription at all !!!', 's').length).assertEqual(0);
       expect(parseSubscriptionBody('{invalid json', 's').length).assertEqual(0);
+    });
+
+    it('skips malformed entries instead of aborting the body', 0, () => {
+      // the second line has a broken percent escape in its fragment; it must
+      // not take the whole subscription down with it
+      const body = 'ss://YWVzLTI1Ni1nY206cHc@a.example.com:8388#Node%20A\n' +
+        'ss://YWVzLTI1Ni1nY206cHc@b.example.com:8389#Bad%ZZ\n' +
+        'ss://not!valid!base64\n' +
+        'ss://YWVzLTI1Ni1nY206cHc@c.example.com:8390';
+      const profiles = parseSubscriptionBody(body, 'sub-3');
+      expect(profiles.length).assertEqual(3);
+      expect(profiles[0].host).assertEqual('a.example.com');
+      expect(profiles[1].host).assertEqual('b.example.com');
+      expect(profiles[2].host).assertEqual('c.example.com');
+    });
+
+    it('revives stored subscriptions into usable instances', 0, () => {
+      // JSON.parse yields prototype-less objects; without fromJson the class
+      // methods are missing and upsert() throws on ensureId()
+      const stored = JSON.parse('{"id":"","url":"https://example.com/sub","updatedAt":7}') as
+        Subscription;
+      const revived = SubscriptionStore.fromJson(stored);
+      expect(revived.url).assertEqual('https://example.com/sub');
+      expect(revived.updatedAt).assertEqual(7);
+      revived.ensureId();
+      expect(revived.id.length > 0).assertTrue();
     });
   });
 }

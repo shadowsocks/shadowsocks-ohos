@@ -161,6 +161,19 @@ export class Profile {
   }
 
   /**
+   * Percent-decodes a URL component, returning it unchanged when it contains
+   * a malformed escape. decodeURIComponent throws on those, and a single bad
+   * entry must not abort the parse of a whole subscription body.
+   */
+  static percentDecode(text: string): string {
+    try {
+      return decodeURIComponent(text);
+    } catch (e) {
+      return text;
+    }
+  }
+
+  /**
    * Parses an `ss://` URL in either SIP002 form
    * (`ss://base64(method:password)@host:port#name`) or legacy form
    * (`ss://base64(method:password@host:port)#name`). Returns null when the
@@ -175,7 +188,7 @@ export class Profile {
     let name = '';
     const hashIndex = body.indexOf('#');
     if (hashIndex >= 0) {
-      name = decodeURIComponent(body.substring(hashIndex + 1));
+      name = Profile.percentDecode(body.substring(hashIndex + 1));
       body = body.substring(0, hashIndex);
     }
     // SIP002 query part: ?plugin=name%3Bopts (percent-encoded as a whole)
@@ -189,7 +202,7 @@ export class Profile {
       for (const param of params) {
         const eq = param.indexOf('=');
         if (eq > 0 && param.substring(0, eq) === 'plugin') {
-          const decoded = decodeURIComponent(param.substring(eq + 1));
+          const decoded = Profile.percentDecode(param.substring(eq + 1));
           const semi = decoded.indexOf(';');
           plugin = semi >= 0 ? decoded.substring(0, semi) : decoded;
           pluginOpts = semi >= 0 ? decoded.substring(semi + 1) : '';

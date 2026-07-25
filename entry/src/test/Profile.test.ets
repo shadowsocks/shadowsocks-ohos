@@ -75,6 +75,20 @@ export default function profileTest() {
       expect(plain['plugin_opts'] === undefined).assertTrue();
     });
 
+    it('tolerates malformed percent escapes', 0, () => {
+      // a broken escape in the fragment or the plugin query must not throw
+      // out of parseUrl — one bad entry would abort a whole subscription body
+      const named = Profile.parseUrl(
+        'ss://YWVzLTI1Ni1nY206dGVzdC1wYXNzd29yZA@example.com:8388#Bad%ZZName');
+      expect(named !== null).assertTrue();
+      expect(named!.host).assertEqual('example.com');
+      expect(named!.name).assertEqual('Bad%ZZName');
+      const plugged = Profile.parseUrl(
+        'ss://YWVzLTI1Ni1nY206dGVzdC1wYXNzd29yZA@example.com:8388?plugin=obfs-local%3Bobfs%3Dhttp%');
+      expect(plugged !== null).assertTrue();
+      expect(plugged!.plugin).assertEqual('obfs-local%3Bobfs%3Dhttp%');
+    });
+
     it('rejects invalid urls', 0, () => {
       expect(Profile.parseUrl('') === null).assertTrue();
       expect(Profile.parseUrl('http://example.com') === null).assertTrue();

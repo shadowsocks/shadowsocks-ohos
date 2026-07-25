@@ -9,8 +9,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CRATE_DIR="$SCRIPT_DIR/sslocal-ffi"
-TARGET="x86_64-unknown-linux-musl"
 OUT_DIR="$SCRIPT_DIR/.tun-e2e"
+
+# Build for the host's architecture: docker runs the container natively, and an
+# x86_64 helper on an arm64 host (every Apple Silicon Mac — this script's main
+# audience) would go through qemu user-mode emulation, which segfaults the
+# helper often enough to make the e2e flaky. Override with TARGET.
+case "$(uname -m)" in
+    arm64 | aarch64) TARGET="${TARGET:-aarch64-unknown-linux-musl}" ;;
+    *) TARGET="${TARGET:-x86_64-unknown-linux-musl}" ;;
+esac
 
 echo "=== building static musl helper ($TARGET) ==="
 rustup target list --installed | grep -q "$TARGET" || rustup target add "$TARGET"
@@ -39,12 +47,22 @@ if [[ -n "${E2E_PROXY:-}" ]]; then
 fi
 
 echo "=== running e2e in privileged container ($E2E_IMAGE) ==="
+# `${arr[@]+"${arr[@]}"}`, not `"${arr[@]}"`: bash 3.2 — what macOS ships, and
+# macOS is this script's whole reason to exist — treats the expansion of an
+# empty array as an unbound variable and aborts under `set -u`.
 exec docker run --rm --privileged \
     --device /dev/net/tun \
-    "${PROXY_ARGS[@]}" \
+    ${PROXY_ARGS[@]+"${PROXY_ARGS[@]}"} \
     -v "$OUT_DIR:/work" \
     -e NET_HELPER=/work/net_helper \
     -e "RUST_LOG=${RUST_LOG:-info}" \
     --entrypoint bash \
     "$E2E_IMAGE" \
-    -c "{ $E2E_PREP ; } ; bash /work/tun-e2e-linux.sh"
+    -c "{ $E2E_PREP ; } ; \
+        command -v ip >/dev/null || { \
+            echo 'no iproute2 in the container: E2E_PREP could not install it.' >&2; \
+            echo 'The container usually has no direct internet — start the bundled' >&2; \
+            echo 'proxy and point E2E_PROXY at it (see the comments in this script).' >&2; \
+            exit 1; \
+        } ; \
+        bash /work/tun-e2e-linux.sh"

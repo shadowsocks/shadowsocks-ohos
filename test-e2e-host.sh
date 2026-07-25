@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/native/sslocal-ffi"
 
-echo "=== 1/2 host tests (incl. SOCKS5 e2e round-trip) ==="
+echo "=== 1/3 host tests (incl. SOCKS5 e2e round-trip) ==="
 cargo test
 
 echo "=== 2/3 cross-compile check for aarch64-unknown-linux-ohos ==="
@@ -42,15 +42,35 @@ fi
 cargo check --target aarch64-unknown-linux-ohos
 
 echo "=== 3/3 tun packet-routing e2e ==="
-# Genuine IP-packet round-trip through the tun stack. Needs Linux + root
-# (CAP_NET_ADMIN, /dev/net/tun). On other hosts, run it in a container with
-# harmony/native/run-tun-e2e-docker.sh instead.
-if [[ "$(uname -s)" == "Linux" && "$(id -u)" == "0" ]] && command -v ip >/dev/null; then
+# Genuine IP-packet round-trip through the tun stack. Needs Linux, iproute2,
+# /dev/net/tun and CAP_NET_ADMIN — root, or passwordless sudo (which is what
+# CI runners and most Linux dev boxes have). On other hosts, run it in a
+# container with harmony/native/run-tun-e2e-docker.sh instead.
+AS_ROOT=()
+if [[ "$(uname -s)" != "Linux" ]]; then
+    TUN_SKIP="not Linux"
+elif ! command -v ip >/dev/null; then
+    TUN_SKIP="iproute2 (ip) not installed"
+elif [[ ! -c /dev/net/tun ]]; then
+    TUN_SKIP="/dev/net/tun is missing"
+elif [[ "$(id -u)" == "0" ]]; then
+    TUN_SKIP=""
+elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
+    TUN_SKIP=""
+    AS_ROOT=(sudo)
+else
+    TUN_SKIP="needs root or passwordless sudo"
+fi
+
+if [[ -z "${TUN_SKIP:-}" ]]; then
+    # build the helper as the invoking user, run the namespace setup as root
     cargo build --release --example net_helper
-    NET_HELPER="$SCRIPT_DIR/native/sslocal-ffi/target/release/examples/net_helper" \
+    "${AS_ROOT[@]+"${AS_ROOT[@]}"}" env \
+        NET_HELPER="$SCRIPT_DIR/native/sslocal-ffi/target/release/examples/net_helper" \
+        RUST_LOG="${RUST_LOG:-info}" \
         bash "$SCRIPT_DIR/native/tun-e2e-linux.sh"
 else
-    echo "SKIPPED (needs Linux + root); use run-tun-e2e-docker.sh on other hosts"
+    echo "SKIPPED ($TUN_SKIP); use run-tun-e2e-docker.sh on other hosts"
 fi
 
 echo ""

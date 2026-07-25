@@ -66,7 +66,9 @@ fn spawn_ss_server() {
         )
         .unwrap();
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(shadowsocks_service::run_server(config)).unwrap();
+        runtime
+            .block_on(shadowsocks_service::run_server(config))
+            .unwrap();
     });
 }
 
@@ -129,7 +131,12 @@ fn socks5_roundtrip_through_tunnel() {
     let (stat_port, stat_rx) = spawn_stat_listener();
     let stat_addr = CString::new(format!("127.0.0.1:{stat_port}")).unwrap();
     assert_eq!(sslocal_set_stat_address(stat_addr.as_ptr()), SSLOCAL_OK);
-    assert_eq!(sslocal_start(config.as_ptr()), SSLOCAL_OK, "{}", last_error_text());
+    assert_eq!(
+        sslocal_start(config.as_ptr()),
+        SSLOCAL_OK,
+        "{}",
+        last_error_text()
+    );
     assert_eq!(sslocal_is_running(), 1);
     // a second start must be rejected while the first instance lives
     assert_eq!(sslocal_start(config.as_ptr()), SSLOCAL_ERR_ALREADY_RUNNING);
@@ -137,7 +144,9 @@ fn socks5_roundtrip_through_tunnel() {
 
     // SOCKS5: greeting with no-auth
     let mut stream = TcpStream::connect(("127.0.0.1", LOCAL_PORT)).unwrap();
-    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
     stream.write_all(&[0x05, 0x01, 0x00]).unwrap();
     let mut reply = [0u8; 2];
     stream.read_exact(&mut reply).unwrap();
