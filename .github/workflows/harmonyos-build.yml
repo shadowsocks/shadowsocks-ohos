@@ -1,0 +1,145 @@
+name: HarmonyOS build
+
+# The HAP build and debug signing — what needs the HarmonyOS SDK but neither a
+# device nor a GUI. The ArkTS unit tests are *not* here: their runner drives the
+# previewer, a GUI component that does not work on Linux (the specs silently do
+# not execute), so they live in harmonyos-unit-tests.yml on macOS.
+#
+# Huawei's DevEco command-line tools are behind an account + region gate
+# (docs/hos-emulator-vpn.md §4) and cannot be redistributed, so they are
+# streamed from a private S3/R2 bucket populated by
+# ci/package-hos-toolchain.sh, authenticated with the repository secrets
+# R2_API_TOKEN (a Cloudflare API token) and R2_ENDPOINT. Secrets are not
+# exposed to pull requests from forks, which is why this runs on pushes to
+# main and on demand, while the host-side workflows gate every PR.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Where ci/package-hos-toolchain.sh put the bundle. The account lives in the
+  # R2_ENDPOINT secret, so a bucket name on its own gives nothing away.
+  R2_BUCKET: shadowsocks
+  HOS_BUNDLE_PREFIX: harmonyos-6.1.1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: HAP build, signing and ArkTS unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.repository == 'shadowsocks/shadowsocks-ohos'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-core
+        with:
+          targets: aarch64-unknown-linux-ohos
+
+      # 352 bytes, so this runs even on a cache hit: the archive's sha256 from
+      # the manifest is the cache key, which means re-uploading a bundle
+      # invalidates the cache by itself, with nothing to bump by hand.
+      - name: Resolve the bundle version
+        env:
+          R2_API_TOKEN: ${{ secrets.R2_API_TOKEN }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          source ci/r2-env.sh
+          sha="$(aws s3 cp --endpoint-url "$R2_ENDPOINT" \
+            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/manifest.txt" - \
+            | awk '/hos-tools-linux-x64\.zip/ { print $1 }')"
+          [[ -n "$sha" ]] || { echo "no hos-tools checksum in the manifest"; exit 1; }
+          echo "HOS_TOOLS_SHA=$sha" >> "$GITHUB_ENV"
+
+      - name: Cache the HarmonyOS toolchain
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/hos-tools
+          key: hos-tools-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}
+
+      # Huawei's zip verbatim, because it holds 19 pairs of paths that differ
+      # only in case (linux/netfilter headers) — repacking it on a
+      # case-insensitive filesystem silently drops files. It cannot be streamed
+      # either: unzip needs to seek, so it lands on disk and is deleted after.
+      # Only the tools are fetched; the emulator image belongs to the
+      # self-hosted e2e runner, which has it locally.
+      - name: Fetch the HarmonyOS toolchain
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          R2_API_TOKEN: ${{ secrets.R2_API_TOKEN }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          source ci/r2-env.sh
+          mkdir -p "$HOME/hos-tools"
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" \
+            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/hos-tools-linux-x64.zip" \
+            /tmp/hos-tools.zip
+          unzip -q /tmp/hos-tools.zip -d "$HOME/hos-tools"
+          rm -f /tmp/hos-tools.zip
+
+      - name: Locate the toolchain
+        run: |
+          set -euo pipefail
+          # The archive keeps the directory name it was packed from.
+          tools="$(find "$HOME/hos-tools" -maxdepth 1 -mindepth 1 -type d | head -1)"
+          [[ -x "$tools/bin/hvigorw" ]] || { echo "no hvigorw under $tools"; exit 1; }
+          {
+            echo "HOS_TOOLS=$tools"
+            echo "DEVECO_SDK_HOME=$tools/sdk"
+            echo "OHOS_SDK_HOME=$tools/sdk/default/openharmony"
+            echo "OHOS_NDK_HOME=$tools/sdk/default/openharmony/native"
+          } >> "$GITHUB_ENV"
+          df -h /
+
+      # Small (tens of MB) but fetched from Huawei's registries on every build:
+      # ohpm's package store and the hvigor plugins hvigorw pulls on first run.
+      - name: Cache ohpm and hvigor dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ohpm
+            ~/.hvigor
+            oh_modules
+            .hvigor
+          key: hos-deps-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}-${{ hashFiles('oh-package-lock.json5', 'oh-package.json5', 'entry/oh-package.json5') }}
+          restore-keys: hos-deps-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}-
+
+      # restool's libimage_transcoder_shared.so links against libGL, which the
+      # runner image does not ship — @CompileResource dies without it.
+      - name: Install the resource compiler's dependency
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libgl1
+
+      - name: Resolve ohpm dependencies
+        run: |
+          "$HOS_TOOLS/bin/ohpm" install
+
+      - name: Build the native core
+        run: native/build-ohos.sh
+
+      - name: Build and sign both HAPs
+        run: |
+          set -euo pipefail
+          "$HOS_TOOLS/bin/hvigorw" --no-daemon assembleHap --mode module \
+            -p product=default -p buildMode=debug
+          "$HOS_TOOLS/bin/hvigorw" --no-daemon assembleHap --mode module \
+            -p module=entry@ohosTest -p product=default -p buildMode=debug
+          native/sign-hap-debug.sh entry/build/default/outputs/default/entry-default-unsigned.hap
+          native/sign-hap-debug.sh entry/build/default/outputs/ohosTest/entry-ohosTest-unsigned.hap
+
+      - name: Upload the signed HAPs
+        uses: actions/upload-artifact@v4
+        with:
+          name: haps
+          path: entry/build/default/outputs/*/*-signed.hap
+          if-no-files-found: error

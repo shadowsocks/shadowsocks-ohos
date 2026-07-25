@@ -129,8 +129,10 @@ guest traffic is ever delivered to the tun on the public image**:
 
 So the missing consent app is not the only emulator gap: the policy routing
 that should steer app traffic into the VPN interface does not take effect
-(system-side; the same flow works on real devices). An HTTP-level e2e
-through the tunnel can therefore only pass on real hardware.
+(system-side; the same flow works on real devices). An HTTP-level e2e **over
+the tun path** can therefore only pass on real hardware. Traffic handed to the
+core directly — SOCKS mode — is unaffected, and that is what CI exercises on
+the emulator (see below).
 
 ### On-device e2e recipe (works on a real device)
 
@@ -149,12 +151,41 @@ python3 -m http.server 8000 --directory <dir-with-e2e.txt> --bind 0.0.0.0
 hdc shell aa test -b com.xbt.project -m entry_test -s unittest OpenHarmonyTestRunner
 ```
 
-Gotchas learned: hypium's default per-spec timeout is 5 s (raise with
-`Hypium.setTimeConfig(ms)` — `setTimeOut` does not exist in hypium 1.0.19);
-`aa test` disconnects a previously running VPN extension of the same bundle;
-the emulator's guest reaches the host at `10.0.2.2` and can also reach the
-host's LAN address directly via slirp, so a successful fetch alone proves
-nothing — the core's counters (or the server log) must be checked.
+Gotchas learned:
+
+- hypium's default per-spec timeout is 5 s. Raise it with `-s timeout <ms>` on
+  the `aa test` command line. **Not** with `Hypium.setTimeConfig(ms)`, despite
+  the name: that installs a *system-time provider* object, which hypium later
+  calls `.getRealTime()` on while reporting a finished spec. Handing it a
+  number makes that call throw inside the reporter, and the run hangs after the
+  spec body completes — the test process stays alive, logs nothing more, and
+  `aa test` sits there until its own `-w` deadline.
+- `aa test` disconnects a previously running VPN extension of the same bundle.
+- A freshly booted image is **locked**, and `aa test` will not launch the test
+  ability then ("The device screen is locked … cannot be unlocked
+  automatically", because the image is in developer mode). Wake and unlock it
+  first: `power-shell wakeup`, `power-shell timeout -o 2147483647` (so it does
+  not dim again mid-run) and a swipe, `uinput -T -m 660 2400 660 900 200`.
+- Closing a `TCPSocket` whose `connect()` is still in flight kills the test
+  process outright — no JS error, no faultlog, just silence.
+- The emulator's guest reaches the host at `10.0.2.2` and can also reach the
+  host's LAN address directly via slirp, so a successful fetch alone proves
+  nothing — the core's counters (or the server log) must be checked. The SOCKS
+  e2e sidesteps this by fetching `127.0.0.1:18800`, an address only the
+  host-side `ssserver` can resolve to the marker (see below).
+
+### The e2e that *does* run on the emulator
+
+Because §2a rules out any tun-based test here, the on-device test CI runs is
+`entry/src/ohosTest/ets/test/SocksE2e.test.ets`: it starts the core in SOCKS
+mode through the same NAPI entry point the app uses and pulls a marker page
+through the tunnel, with a companion spec asserting the marker is unreachable
+without it. `ci/hos-emulator-e2e.sh` drives the whole thing (build, sign, boot,
+unlock, install, run) and is what `.github/workflows/harmonyos-e2e.yml`
+invokes — on a self-hosted Apple-silicon
+runner, since GitHub's hosted macOS runners cannot run this emulator (their
+Apple-silicon machines have no nested virtualization, and their Intel ones
+cannot execute an arm64 emulator binary at all).
 
 ## 3. Emulator image signature verification
 

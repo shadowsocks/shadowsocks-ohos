@@ -1,0 +1,5 @@
+# The emulator e2e needs a self-hosted Apple-silicon runner carrying the
+# HarmonyOS toolchain and image; actionlint cannot know custom labels.
+self-hosted-runner:
+  labels:
+    - harmonyos

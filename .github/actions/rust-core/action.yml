@@ -1,0 +1,67 @@
+name: Set up the shared Rust core
+description: >
+  Clones the shadowsocks-rust checkout this crate path-depends on, installs the
+  Rust toolchain and restores the cargo cache. Every Rust workflow starts here,
+  so the core's pinned ref lives in exactly one place.
+
+inputs:
+  ref:
+    description: >
+      shadowsocks-rust tag to build against. Keep in step with the
+      core/src/main/rust/shadowsocks-rust submodule pin in shadowsocks-android,
+      so both platforms ship the same core.
+    required: false
+    default: v1.23.4
+  targets:
+    description: Extra rustup targets, comma-separated.
+    required: false
+    default: ''
+  components:
+    description: Extra rustup components, comma-separated.
+    required: false
+    default: ''
+
+outputs:
+  ref:
+    description: The shadowsocks-rust ref that was checked out.
+    value: ${{ inputs.ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out the shared Rust core
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Cargo.toml path-depends on ../../../core/... relative to
+        # native/sslocal-ffi, which is a *sibling* of this checkout — the
+        # layout this subproject has inside shadowsocks-android.
+        core_dir="$(dirname "$GITHUB_WORKSPACE")/core/src/main/rust"
+        mkdir -p "$core_dir"
+        if [[ ! -d "$core_dir/shadowsocks-rust/.git" ]]; then
+          git clone --depth 1 --branch "${{ inputs.ref }}" \
+            https://github.com/shadowsocks/shadowsocks-rust.git \
+            "$core_dir/shadowsocks-rust"
+        else
+          # Self-hosted runners keep the workspace parent between runs.
+          git -C "$core_dir/shadowsocks-rust" fetch --depth 1 origin \
+            "refs/tags/${{ inputs.ref }}:refs/tags/${{ inputs.ref }}" -f
+          git -C "$core_dir/shadowsocks-rust" checkout -f "${{ inputs.ref }}"
+        fi
+
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
+
+    - name: Cargo cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          native/sslocal-ffi/target
+        # Shared across the Rust workflows: they build the same crate, and a
+        # cache written by one is a valid restore for the others.
+        key: cargo-${{ runner.os }}-${{ inputs.ref }}-${{ hashFiles('native/sslocal-ffi/Cargo.lock') }}
+        restore-keys: cargo-${{ runner.os }}-${{ inputs.ref }}-

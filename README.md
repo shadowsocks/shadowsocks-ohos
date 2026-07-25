@@ -1,6 +1,11 @@
 # Shadowsocks for HarmonyOS NEXT
 
-[![CI](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/ci.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/ci.yml)
+[![Lint](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/lint.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/lint.yml)
+[![Core tests](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-core.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-core.yml)
+[![Cross-compile](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-cross.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-cross.yml)
+[![Tun e2e](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-tun.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-tun.yml)
+[![HarmonyOS build](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-build.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-build.yml)
+[![ArkTS unit tests](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-unit-tests.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-unit-tests.yml)
 
 A native HarmonyOS NEXT (ArkTS/ArkUI, Stage model) client, sharing the Rust
 core (`shadowsocks-rust`) with the Android app through a C ABI + NAPI bridge.
@@ -75,24 +80,87 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
 
 ## Testing
 
-* **Host e2e (no HarmonyOS SDK needed)** — `./test-e2e-host.sh`:
-  1. Rust test suite, including `tests/e2e.rs`: an in-process shadowsocks
-     server, an sslocal instance driven through the same C ABI the NAPI bridge
-     uses, and a SOCKS5 round-trip through the encrypted tunnel.
-  2. Cross-compile check that the whole core builds for
+* **Host e2e (no HarmonyOS SDK needed)** — `./test-e2e-host.sh`, which runs
+  three independent steps; pass names to run a subset (`./test-e2e-host.sh
+  cross tun`):
+  1. `tests` — Rust test suite, including `tests/e2e.rs`: an in-process
+     shadowsocks server, an sslocal instance driven through the same C ABI the
+     NAPI bridge uses, and a SOCKS5 round-trip through the encrypted tunnel.
+  2. `cross` — cross-compile check that the whole core builds for
      `aarch64-unknown-linux-ohos` (real SDK clang if present, else a zig cc
      shim for the C bits).
-  3. **Tun packet-routing e2e** (Linux, `/dev/net/tun`, root or passwordless
-     sudo): sends a real TCP flow into a tun device and asserts it round-trips
-     through the tunnel. On non-Linux hosts run it in a privileged container
-     with `native/run-tun-e2e-docker.sh`.
+  3. `tun` — **tun packet-routing e2e** (Linux, `/dev/net/tun`, root or
+     passwordless sudo): sends a real TCP flow into a tun device and asserts it
+     round-trips through the tunnel. On non-Linux hosts run it in a privileged
+     container with `native/run-tun-e2e-docker.sh`.
 
-  All three steps, plus rustfmt and clippy, run in CI on every push and pull
-  request — see `.github/workflows/ci.yml`.
+  Each step is also its own CI workflow, so a red badge names the surface that
+  broke: `test-core.yml`, `test-cross.yml`, `test-tun.yml`, plus `lint.yml` for
+  rustfmt/clippy/shellcheck. All four gate every pull request.
 * **ArkTS unit tests** — `entry/src/test` (hypium) covers `ss://` URL parsing
-  and both SOCKS and tun config serialization; run from DevEco Studio.
-* **On-device tests** — `entry/src/ohosTest` exercises the NAPI surface
-  (including `startTunFd`) on a HarmonyOS emulator/device from DevEco Studio.
+  and both SOCKS and tun config serialization. Run from DevEco Studio, or
+  headless with `hvigorw test --mode module -p module=entry -p product=default`
+  — **on macOS or Windows**: the runner drives the SDK's previewer, which does
+  not work on Linux.
+* **On-device e2e (emulator)** — `ci/hos-emulator-e2e.sh` builds and debug-signs
+  both HAPs, boots the HarmonyOS emulator, installs them and runs
+  `entry/src/ohosTest` against a shadowsocks server on the host:
+
+  ```sh
+  HOS_TOOLS=~/workspace/command-line-tools HOS_IMAGES=~/Library/Huawei/Sdk \
+      ci/hos-emulator-e2e.sh
+  ```
+
+  `SocksE2e.test.ets` is the real end-to-end case: it starts the core in SOCKS
+  mode through the NAPI bridge and fetches a marker page that is only reachable
+  from the far end of the tunnel (a companion spec asserts it is unreachable
+  without it). `SslocalNativeTest` covers the rest of the NAPI surface.
+  `VpnE2e.test.ets` is skipped here — the public emulator image never delivers
+  guest traffic to `vpn-tun`, so it is a real-device test (see
+  `docs/hos-emulator-vpn.md` §2a).
+* **CI** — one workflow per surface, so a failure names what broke:
+
+  | workflow | what it runs | where |
+  |---|---|---|
+  | `lint.yml` | rustfmt, clippy, shellcheck | hosted Linux |
+  | `test-core.yml` | Rust unit tests + host e2e tunnels | hosted Linux |
+  | `test-cross.yml` | `aarch64-unknown-linux-ohos` build check | hosted Linux |
+  | `test-tun.yml` | tun packet-routing e2e | hosted Linux |
+  | `harmonyos-build.yml` | HAP build and debug signing | hosted Linux |
+  | `harmonyos-unit-tests.yml` | ArkTS unit tests | hosted macOS |
+  | `harmonyos-e2e.yml` | on-device suites on the emulator | self-hosted macOS |
+
+  The first four gate every pull request. The HarmonyOS trio needs the DevEco
+  toolchain, which cannot be downloaded by a runner or redistributed, so it is
+  streamed from a private bucket populated by `ci/package-hos-toolchain.sh` and
+  authenticated with the repository secrets `R2_API_TOKEN` (a Cloudflare API
+  token) and `R2_ENDPOINT` — R2's S3 API takes that token as its ID plus the
+  SHA-256 of its value, which `ci/r2-env.sh` derives at runtime. The unpacked
+  toolchain is cached between runs, keyed on the archive's checksum from the
+  bundle manifest, so re-uploading a bundle invalidates it on its own. Since
+  secrets are not exposed to fork pull requests, those three run on pushes to
+  `main` and on demand.
+
+  Huawei ships the command-line tools for Linux x64 as well, so the HAP build
+  runs on a Linux runner — more free disk, no Xcode eviction, faster start. Two
+  things keep the Mac in the picture:
+
+  * The **ArkTS unit tests** cannot run on Linux. The task that emits the
+    results is what actually executes the specs, by driving the SDK's previewer
+    (a GUI component); on Linux it either throws or hangs, and a deliberately
+    failing spec produces no output at all. So `harmonyos-unit-tests.yml` uses
+    the macOS bundle.
+  * The **emulator** is macOS/Windows-only, and its binary and guest are both
+    arm64, so it needs HVF — which GitHub's Apple-silicon runners do not expose
+    (no nested virtualization) and whose Intel runners cannot use for an arm64
+    guest. `harmonyos-e2e.yml` therefore targets a self-hosted Apple-silicon
+    runner, and is skipped unless the repository variables `HOS_SELF_HOSTED`,
+    `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are set, so pushes are never left
+    queued against an offline runner.
+
+  Common setup — the shared `shadowsocks-rust` checkout, the toolchain and the
+  cargo cache — lives in the composite action `.github/actions/rust-core`,
+  which is also where the core's pinned ref is defined.
 
 ## Tun mode
 

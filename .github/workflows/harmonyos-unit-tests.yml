@@ -1,0 +1,132 @@
+name: ArkTS unit tests
+
+# `hvigorw test` on a hosted macOS runner.
+#
+# **Not on Linux**, even though harmonyos-build.yml builds there happily: the
+# task that produces the results (@GenerateUnitTestResult) is what actually
+# *runs* the specs, by driving the SDK's previewer — a GUI component. On Linux
+# it dies with "Cannot read properties of null" in a container, and hangs
+# forever in a full VM with the amd64 GL libraries installed; either way the
+# specs never execute, and a deliberately failing spec produced no output at
+# all. So this job takes the macOS toolchain bundle instead.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  R2_BUCKET: shadowsocks
+  HOS_BUNDLE_PREFIX: harmonyos-6.1.1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit-tests:
+    name: ArkTS unit tests
+    runs-on: macos-15
+    timeout-minutes: 45
+    if: github.repository == 'shadowsocks/shadowsocks-ohos'
+    steps:
+      - uses: actions/checkout@v4
+
+      # ~14 GB free; the toolchain alone is ~6 GB unpacked. Keep the *selected*
+      # Xcode — nothing else here needs the others.
+      - name: Free disk space
+        run: |
+          df -h /
+          keep="$(xcode-select -p | sed 's|/Contents/Developer.*||')"
+          for app in /Applications/Xcode_*.app; do
+            [[ "$app" == "$keep" ]] || sudo rm -rf "$app"
+          done
+          sudo rm -rf ~/Library/Developer/CoreSimulator/Caches \
+                      /Library/Developer/CoreSimulator/Profiles/Runtimes || true
+          df -h /
+
+      - name: Ensure aws and zstd are present
+        run: |
+          command -v aws  >/dev/null || brew install awscli
+          command -v zstd >/dev/null || brew install zstd
+
+      # 352 bytes, so this runs even on a cache hit: the archive's sha256 from
+      # the manifest is the cache key, so re-uploading a bundle invalidates the
+      # cache by itself.
+      - name: Resolve the bundle version
+        env:
+          R2_API_TOKEN: ${{ secrets.R2_API_TOKEN }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          source ci/r2-env.sh
+          sha="$(aws s3 cp --endpoint-url "$R2_ENDPOINT" \
+            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/manifest.txt" - \
+            | awk '/hos-tools\.tar\.zst/ { print $1 }')"
+          [[ -n "$sha" ]] || { echo "no hos-tools checksum in the manifest"; exit 1; }
+          echo "HOS_TOOLS_SHA=$sha" >> "$GITHUB_ENV"
+
+      - name: Cache the HarmonyOS toolchain
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/hos-tools
+          key: hos-tools-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}
+
+      # The macOS bundle, streamed straight into place: holding the archive and
+      # its expanded contents at once would not fit.
+      - name: Fetch the HarmonyOS toolchain
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          R2_API_TOKEN: ${{ secrets.R2_API_TOKEN }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          source ci/r2-env.sh
+          mkdir -p "$HOME/hos-tools"
+          aws s3 cp --endpoint-url "$R2_ENDPOINT" \
+            "s3://$R2_BUCKET/$HOS_BUNDLE_PREFIX/hos-tools.tar.zst" - \
+            | zstd -dc | tar -C "$HOME/hos-tools" -xf -
+
+      - name: Locate the toolchain
+        run: |
+          set -euo pipefail
+          tools="$(find "$HOME/hos-tools" -maxdepth 1 -mindepth 1 -type d | head -1)"
+          [[ -x "$tools/bin/hvigorw" ]] || { echo "no hvigorw under $tools"; exit 1; }
+          {
+            echo "HOS_TOOLS=$tools"
+            echo "DEVECO_SDK_HOME=$tools/sdk"
+            echo "OHOS_SDK_HOME=$tools/sdk/default/openharmony"
+          } >> "$GITHUB_ENV"
+
+      - name: Cache ohpm and hvigor dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.ohpm
+            ~/.hvigor
+            oh_modules
+            .hvigor
+          key: hos-deps-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}-${{ hashFiles('oh-package-lock.json5', 'oh-package.json5', 'entry/oh-package.json5') }}
+          restore-keys: hos-deps-${{ runner.os }}-${{ env.HOS_TOOLS_SHA }}-
+
+      - name: Resolve ohpm dependencies
+        run: |
+          "$HOS_TOOLS/bin/ohpm" install
+
+      # hvigor exits 0 even when specs fail — it only prints "ERROR: Error in
+      # <spec>" — so the failure has to be grepped out of the log. The second
+      # grep is the guard against the opposite mistake: if the run produced no
+      # test task at all, an absent failure line would look like a pass.
+      - name: ArkTS unit tests
+        run: |
+          set -o pipefail
+          "$HOS_TOOLS/bin/hvigorw" --no-daemon test --mode module \
+            -p module=entry -p product=default 2>&1 | tee unit-tests.log
+          grep -q "Finished :entry:default@GenerateUnitTestResult" unit-tests.log \
+            || { echo "the test task never completed"; exit 1; }
+          ! grep -q "ERROR: Error in" unit-tests.log
