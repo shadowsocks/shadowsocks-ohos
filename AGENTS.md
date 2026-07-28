@@ -225,48 +225,39 @@ Steps (order matters — the CMake build fails if the staticlib is missing):
   - `test-cross.yml` — `./test-e2e-host.sh cross` (with `mlugg/setup-zig`).
   - `test-tun.yml` — `./test-e2e-host.sh tun` with `TUN_E2E_REQUIRED=1`, so a
     missing `/dev/net/tun` fails the job instead of skipping quietly.
-  - `harmonyos-build.yml` — HAP build and debug signing, on a hosted **Linux**
-    runner (Huawei ships linux-x64 command-line tools).
-  - `harmonyos-unit-tests.yml` — the ArkTS unit tests, on a hosted **macOS**
-    runner: their runner drives the SDK previewer, which on Linux throws in a
-    container and hangs in a VM, with specs never executing.
-  - `harmonyos-e2e.yml` — the on-device suites, self-hosted (see below).
 
-  The first four gate every push and pull request. Shared setup — the sibling
+  All four gate every push and pull request. Shared setup — the sibling
   `shadowsocks-rust` checkout (this crate path-depends on it), the Rust
   toolchain and the cargo cache — lives in the composite action
   `.github/actions/rust-core`, whose `ref` input is the single place the core's
   pin is defined; keep it in step with shadowsocks-android's submodule.
 
-  The three HarmonyOS workflows need Huawei's DevEco command-line tools, which
-  are neither publicly downloadable (`docs/hos-emulator-vpn.md` §4) nor
-  redistributable, so they stream them from a private S3/R2 bucket using the
-  secrets `R2_API_TOKEN` (a Cloudflare API token) and `R2_ENDPOINT`; the S3
-  keypair is derived from them at runtime by `ci/r2-env.sh` (token ID from
-  `/tokens/verify`, secret = SHA-256 of the token value) and masked. Two
-  toolchains live there: `hos-tools-linux-x64.zip` (Huawei's Linux zip,
-  verbatim — it holds 19 paths differing only in case, so repacking it on a
-  case-insensitive filesystem drops files) for the build job, and
-  `hos-tools.tar.zst` (macOS) for the unit tests. Only the 352-byte manifest is
-  fetched on a normal run: the unpacked toolchain is cached under that
-  archive's sha256 from the manifest, so a re-upload invalidates the cache by
-  itself. `ci/package-hos-toolchain.sh` builds and uploads the macOS bundle and
-  the emulator image; the Linux zip is uploaded as-is.
+  **Nothing that needs the HarmonyOS SDK runs in CI**: the HAP build, debug
+  signing, the ArkTS unit tests and the on-device suites are all local-only,
+  because Huawei's DevEco command-line tools are neither publicly downloadable
+  (`docs/hos-emulator-vpn.md` §4) nor redistributable. Do not add a workflow
+  that assumes a runner can fetch them.
 
-  Linux quirks the build job handles: `restool`'s
-  `libimage_transcoder_shared.so` links against libGL, so `libgl1` is installed
-  before `@CompileResource` runs; signing needs a JDK, which the runner image
-  ships.
+  There was such a setup — the tools came from a private S3/R2 bucket — and it
+  was removed once the bucket was emptied. `ci/package-hos-toolchain.sh` (packs
+  and uploads a bundle) and `ci/r2-env.sh` (derives S3 credentials from a
+  Cloudflare API token, since R2 takes the token's ID plus the SHA-256 of its
+  value) survive as the tooling to restore it; the workflows are in the history
+  of the commit that removed them. Facts worth keeping from that round, should
+  it come back:
+  - The Linux toolchain must be stored as Huawei's zip **verbatim** — it holds
+    19 paths differing only in case, which a case-insensitive filesystem
+    collapses, so it can never be repacked on macOS.
+  - On Linux, `restool`'s `libimage_transcoder_shared.so` links against libGL
+    (`libgl1` must be installed before `@CompileResource`).
+  - The ArkTS unit tests cannot run on Linux at all: their runner drives the
+    SDK previewer, whose Linux build is missing `libshared_libz.so` entirely
+    and links `libhilog.so` while the SDK ships only `libhilog_linux.so`. The
+    specs silently never execute — a deliberately failing spec produces no
+    output — so a Linux "pass" would be meaningless.
+  - The emulator needs HVF and is macOS/Windows-only, so no GitHub-hosted
+    runner can run it; only a self-hosted Apple-silicon machine can.
 
-  `harmonyos-e2e.yml` runs `ci/hos-emulator-e2e.sh` on a **self-hosted**
-  Apple-silicon runner labelled `harmonyos`. It cannot be hosted — the Emulator
-  binary and the image are both arm64, so it needs HVF, which GitHub's
-  Apple-silicon runners do not expose (no nested virtualization) and whose
-  Intel runners cannot run an arm64 emulator at all. It is skipped unless the
-  repository variables `HOS_SELF_HOSTED=true`, `HOS_TOOLS_PATH` and
-  `HOS_IMAGES_PATH` are set, so pushes never queue against an offline runner.
-  Secrets are unavailable to fork pull requests, which is why the host-side
-  workflows remain the gate for every PR.
 - **ArkTS unit tests** — `entry/src/test` (hypium): `ss://` URL parsing, both
   SOCKS and tun config serialization (including ACL injection), subscription
   body parsing. Run from DevEco Studio or headless:

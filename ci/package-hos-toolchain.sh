@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 #
-# Packages the HarmonyOS toolchain CI needs into two archives and uploads them
-# to an S3-compatible bucket (Cloudflare R2), because Huawei's DevEco
+# Packages the HarmonyOS toolchain and emulator image into archives and uploads
+# them to an S3-compatible bucket (Cloudflare R2), because Huawei's DevEco
 # command-line tools and emulator images are behind an account + region-gated
 # download (docs/hos-emulator-vpn.md §4) and cannot be fetched by a runner —
 # nor redistributed publicly, which is why the bucket must be private.
+#
+# Nothing consumes this today: the SDK-dependent CI was removed and the bucket
+# emptied. It stays as the tooling to bring that back — pair it with the
+# workflows in the history of the commit that deleted them.
 #
 # Run this on a Mac that already has both installed:
 #
@@ -22,12 +26,10 @@
 # s3://$R2_BUCKET/$PREFIX/:
 #
 #   hos-tools.tar.zst    the **macOS** command-line-tools, minus what a CLI
-#                        build never uses. Used by harmonyos-unit-tests.yml
-#                        (the ArkTS test runner only works on macOS).
-#   hos-images.tar.zst   the emulator system image. CI does not fetch this —
-#                        the emulator only runs on a self-hosted Apple-silicon
-#                        runner, which has the image locally; it is here to
-#                        provision such a machine (or a replacement) without
+#                        build never uses (the ArkTS test runner only works
+#                        on macOS).
+#   hos-images.tar.zst   the emulator system image — for provisioning a
+#                        machine that runs the on-device e2e, without
 #                        going through Huawei's region-gated download again.
 #   manifest.txt         versions and sha256 of every archive; the workflows
 #                        key their toolchain cache on the relevant one.

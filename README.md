@@ -4,8 +4,6 @@
 [![Core tests](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-core.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-core.yml)
 [![Cross-compile](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-cross.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-cross.yml)
 [![Tun e2e](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-tun.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/test-tun.yml)
-[![HarmonyOS build](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-build.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-build.yml)
-[![ArkTS unit tests](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-unit-tests.yml/badge.svg)](https://github.com/shadowsocks/shadowsocks-ohos/actions/workflows/harmonyos-unit-tests.yml)
 
 A native HarmonyOS NEXT (ArkTS/ArkUI, Stage model) client, sharing the Rust
 core (`shadowsocks-rust`) with the Android app through a C ABI + NAPI bridge.
@@ -126,41 +124,27 @@ HarmonyOS emulator needs a system image installed via DevEco / `Emulator
   | `test-core.yml` | Rust unit tests + host e2e tunnels | hosted Linux |
   | `test-cross.yml` | `aarch64-unknown-linux-ohos` build check | hosted Linux |
   | `test-tun.yml` | tun packet-routing e2e | hosted Linux |
-  | `harmonyos-build.yml` | HAP build and debug signing | hosted Linux |
-  | `harmonyos-unit-tests.yml` | ArkTS unit tests | hosted macOS |
-  | `harmonyos-e2e.yml` | on-device suites on the emulator | self-hosted macOS |
 
-  The first four gate every pull request. The HarmonyOS trio needs the DevEco
-  toolchain, which cannot be downloaded by a runner or redistributed, so it is
-  streamed from a private bucket populated by `ci/package-hos-toolchain.sh` and
-  authenticated with the repository secrets `R2_API_TOKEN` (a Cloudflare API
-  token) and `R2_ENDPOINT` — R2's S3 API takes that token as its ID plus the
-  SHA-256 of its value, which `ci/r2-env.sh` derives at runtime. The unpacked
-  toolchain is cached between runs, keyed on the archive's checksum from the
-  bundle manifest, so re-uploading a bundle invalidates it on its own. Since
-  secrets are not exposed to fork pull requests, those three run on pushes to
-  `main` and on demand.
+  All four gate every push and pull request. Common setup — the shared
+  `shadowsocks-rust` checkout, the toolchain and the cargo cache — lives in the
+  composite action `.github/actions/rust-core`, which is also where the core's
+  pinned ref is defined.
 
-  Huawei ships the command-line tools for Linux x64 as well, so the HAP build
-  runs on a Linux runner — more free disk, no Xcode eviction, faster start. Two
-  things keep the Mac in the picture:
+  Anything needing the **HarmonyOS SDK** — the HAP build, debug signing, the
+  ArkTS unit tests and the on-device suites — is **not** in CI: Huawei's DevEco
+  command-line tools are behind an account + region gate
+  (`docs/hos-emulator-vpn.md` §4) and cannot be redistributed, so a runner
+  cannot obtain them. Run those locally (see the steps above and
+  `ci/hos-emulator-e2e.sh`).
 
-  * The **ArkTS unit tests** cannot run on Linux. The task that emits the
-    results is what actually executes the specs, by driving the SDK's previewer
-    (a GUI component); on Linux it either throws or hangs, and a deliberately
-    failing spec produces no output at all. So `harmonyos-unit-tests.yml` uses
-    the macOS bundle.
-  * The **emulator** is macOS/Windows-only, and its binary and guest are both
-    arm64, so it needs HVF — which GitHub's Apple-silicon runners do not expose
-    (no nested virtualization) and whose Intel runners cannot use for an arm64
-    guest. `harmonyos-e2e.yml` therefore targets a self-hosted Apple-silicon
-    runner, and is skipped unless the repository variables `HOS_SELF_HOSTED`,
-    `HOS_TOOLS_PATH` and `HOS_IMAGES_PATH` are set, so pushes are never left
-    queued against an offline runner.
-
-  Common setup — the shared `shadowsocks-rust` checkout, the toolchain and the
-  cargo cache — lives in the composite action `.github/actions/rust-core`,
-  which is also where the core's pinned ref is defined.
+  Those jobs did run for a while, fed from a private S3/R2 bucket. The tooling
+  for that is still here — `ci/package-hos-toolchain.sh` packs and uploads a
+  bundle, `ci/r2-env.sh` derives S3 credentials from a Cloudflare API token —
+  and the workflows themselves are one `git revert` away in the history. What
+  it costs to bring back: ~5.5 GB in the bucket, two repository secrets
+  (`R2_API_TOKEN`, `R2_ENDPOINT`), and for the emulator a self-hosted
+  Apple-silicon runner, since the emulator needs HVF and no GitHub-hosted
+  runner provides it.
 
 ## Tun mode
 
