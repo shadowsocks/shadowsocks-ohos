@@ -181,11 +181,10 @@ Because §2a rules out any tun-based test here, the on-device test CI runs is
 mode through the same NAPI entry point the app uses and pulls a marker page
 through the tunnel, with a companion spec asserting the marker is unreachable
 without it. `ci/hos-emulator-e2e.sh` drives the whole thing (build, sign, boot,
-unlock, install, run) and is what `.github/workflows/harmonyos-e2e.yml`
-invokes — on a self-hosted Apple-silicon
-runner, since GitHub's hosted macOS runners cannot run this emulator (their
-Apple-silicon machines have no nested virtualization, and their Intel ones
-cannot execute an arm64 emulator binary at all).
+unlock, install, run). It runs locally or on a self-hosted Apple-silicon
+runner, never in hosted CI: GitHub's hosted macOS runners cannot run this
+emulator (their Apple-silicon machines have no nested virtualization, and
+their Intel ones cannot execute an arm64 emulator binary at all).
 
 ## 3. Emulator image signature verification
 
